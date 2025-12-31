@@ -16,7 +16,10 @@ export function setupCommands(bot: Bot) {
 
     // /setcommands - Helper to set the Telegram Menu Button
     bot.command("setcommands", async (ctx: Context) => {
-        if (!ctx.from || !isAdmin(ctx.from.id)) return;
+        if (!ctx.from) return;
+        if (!isAdmin(ctx.from.id)) {
+            return ctx.reply(`❌ Access Denied. Your ID: \`${ctx.from.id}\` is not in ADMIN_ID.`, { parse_mode: "Markdown" });
+        }
 
         await ctx.api.setMyCommands([
             { command: "start", description: "🏠 Main Menu" },
