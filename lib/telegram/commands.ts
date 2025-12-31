@@ -1,7 +1,7 @@
 
 import { Bot, Context } from "grammy";
 import { NauticaVPN } from "../vpn/nautica";
-import { mainMenuKeyboard, getCountryKeyboard, getFormatKeyboard, getInjectMethodKeyboard, getInjectMethodSpecificKeyboard, protocolSelectionKeyboard, subFormatKeyboard } from "./keyboards";
+import { mainMenuKeyboard, getMainMenuKeyboard, getCountryKeyboard, getFormatKeyboard, getInjectMethodKeyboard, getInjectMethodSpecificKeyboard, protocolSelectionKeyboard, subFormatKeyboard } from "./keyboards";
 import { getFlagEmoji } from "../utils/helpers";
 import { deployWorker } from "../deploy/cf_api";
 
@@ -91,7 +91,7 @@ export function setupCommands(bot: Bot) {
     });
 
     bot.callbackQuery("cmd_deploynode", async (ctx) => {
-        await ctx.command("deploynode"); // Trigger logic manually or guide user
+        // await ctx.command("deploynode"); // Trigger logic manually or guide user
         // Since deploynode expects a message for interactive session, triggering it from callback might be tricky context-wise.
         // Better to guide:
         if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCallbackQuery("❌ Admin Only");
