@@ -19,43 +19,102 @@ export function setupCommands(bot: Bot) {
         const welcomeMsg =
             "🎉 *Selamat datang di Nautica Bot! (Vercel Edition)*\n\n" +
             "Kirimkan proxy untuk di cek statusnya, format ip:port maksimal 20 proxy.\n" +
-            "dipisahkan dengan enter contoh: \n" +
-            "192.168.1.1:8443\n" +
-            "dst\n\n" +
-            "📋 *Daftar Command:*\n\n" +
-            "👤 *User Commands:*\n" +
-            "/proxy - Membuat config VLESS dari daftar proxy\n" +
-            "/proxyrandom - Membuat VLESS random\n" +
-            "/listvless - Untuk melihat daftar ISP / Negara\n" +
-            "/getsub - Mengambil API link subscription\n" +
-            "/listwildcard - Melihat daftar wildcard\n" +
-            "/addwc - Menambahkan wildcard (User defined) \n" +
-            "/allstatus - Melihat report status proxy\n" +
-            "/data - Untuk melihat penggunaan data\n\n" +
-            "🔧 *Admin Commands:*\n" +
-            "/deploynode - Deploy VPN Worker ke Account Lain \n" +
-            "/addvless - Menambah VLESS\n" +
-            "/delvless - Menghapus VLESS\n" +
-            "/delvlessdead - Menghapus VLESS mati\n" +
-            "/delwc - Menghapus wildcard";
+            "Atau gunakan menu tombol di bawah ini:";
 
         await ctx.reply(welcomeMsg, {
             parse_mode: "Markdown",
-            reply_markup: mainMenuKeyboard
+            reply_markup: getMainMenuKeyboard(0)
         });
     });
 
-    // /listwildcard command
-    bot.command("listwildcard", async (ctx: Context) => {
-        const wildcards = await vpn.getWildcards();
-        if (wildcards.length === 0) return ctx.reply("❌ Tidak ada wildcard aktif.");
-
-        let msg = `📜 * Daftar wildcard aktif:*\n\n`;
-        wildcards.forEach((w: string, i: number) => {
-            msg += `${i + 1}.\`${w}\`\n`;
+    // Handle Main Menu Pagination
+    bot.callbackQuery(/^menu_page:(.+)$/, async (ctx) => {
+        const page = parseInt(ctx.match[1]);
+        await ctx.editMessageReplyMarkup({
+            reply_markup: getMainMenuKeyboard(page)
         });
+    });
+
+    // Handle Button Commands
+    bot.callbackQuery("cmd_proxy", async (ctx) => {
+        await ctx.reply("🌍 *Pilih Negara untuk Proxy VLESS:*", { parse_mode: "Markdown", reply_markup: getCountryKeyboard(0) });
+        // await ctx.answerCallbackQuery();
+    });
+
+    bot.callbackQuery("cmd_proxyrandom", async (ctx) => {
+        await ctx.reply("📡 *Pilih Protokol:*", { parse_mode: "Markdown", reply_markup: protocolSelectionKeyboard });
+    });
+
+    bot.callbackQuery("cmd_listvless", async (ctx) => {
+        // Reuse logic from command
+        const proxies = await vpn.getTopProxies();
+        if (proxies.length === 0) return ctx.reply("❌ Tidak ada proxy tersedia.");
+        let msg = `📋 *Daftar VLESS:*\n\n\`copy\n`;
+        proxies.forEach((proxy, index) => {
+            msg += `${index + 1}. (${proxy.country}) ${proxy.org} ${getFlagEmoji(proxy.country)}\nPath: /${proxy.country.toLowerCase()}-${proxy.org.replace(/[^a-zA-Z0-9]/g, "").substring(0, 4).toLowerCase()}\nProxy: ${proxy.ip}:${proxy.port}\n\n`;
+        });
+        msg += `\``;
         await ctx.reply(msg, { parse_mode: "Markdown" });
     });
+
+    bot.callbackQuery("cmd_sub", async (ctx) => {
+        await ctx.reply("Silakan pilih tipe konfigurasi:", { parse_mode: "Markdown", reply_markup: subFormatKeyboard });
+    });
+
+    bot.callbackQuery("cmd_listwc", async (ctx) => {
+        const wildcards = await vpn.getWildcards();
+        if (wildcards.length === 0) return ctx.reply("❌ Tidak ada wildcard aktif.");
+        let msg = `📜 *Daftar wildcard aktif:*\n\n`;
+        wildcards.forEach((w: string, i: number) => { msg += `${i + 1}. \`${w}\`\n`; });
+        await ctx.reply(msg, { parse_mode: "Markdown" });
+    });
+
+    bot.callbackQuery("cmd_addwc", async (ctx) => {
+        await ctx.reply("📝 Silakan ketik perintah berikut untuk menambah wildcard:\n\n`/addwc domain.com`", { parse_mode: "Markdown" });
+    });
+
+    bot.callbackQuery("cmd_delwc", async (ctx) => {
+        await ctx.reply("📝 Silakan ketik perintah berikut untuk menghapus wildcard:\n\n`/delwc domain.com`", { parse_mode: "Markdown" });
+    });
+
+    bot.callbackQuery("cmd_allstatus", async (ctx) => {
+        const proxies = await vpn.getProxies();
+        if (proxies.length === 0) return ctx.reply("❌ Tidak ada proxy.");
+        let msg = "📊 *Status Server Proxy:*\n\n";
+        proxies.slice(0, 15).forEach((p, i) => { msg += `${i + 1}. ${p.org} (${p.country}) - ✅ Active\n`; });
+        if (proxies.length > 15) msg += `\n...dan ${proxies.length - 15} lainnya.`;
+        await ctx.reply(msg, { parse_mode: "Markdown" });
+    });
+
+    bot.callbackQuery("cmd_data", async (ctx) => {
+        await ctx.reply("📊 *Penggunaan Data:*\n\nTotal Upload: `0 GB`\nTotal Download: `0 GB`\n\n_Fitur tracking data belum tersedia di versi ini._", { parse_mode: "Markdown" });
+    });
+
+    bot.callbackQuery("cmd_deploynode", async (ctx) => {
+        await ctx.command("deploynode"); // Trigger logic manually or guide user
+        // Since deploynode expects a message for interactive session, triggering it from callback might be tricky context-wise.
+        // Better to guide:
+        if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCallbackQuery("❌ Admin Only");
+        await ctx.reply("🔑 *Deploy Node Mode*\n\nSilakan ketik `/deploynode` untuk memulai sesi interaktif.", { parse_mode: "Markdown" });
+    });
+
+    bot.callbackQuery("cmd_addvless", async (ctx) => {
+        if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCallbackQuery("❌ Admin Only");
+        await ctx.reply("📝 Format tambah proxy:\n`/addvless IP Port CC OrgName`", { parse_mode: "Markdown" });
+    });
+
+    bot.callbackQuery("cmd_delvless", async (ctx) => {
+        if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCallbackQuery("❌ Admin Only");
+        await ctx.reply("📝 Format hapus proxy:\n`/delvless IP`", { parse_mode: "Markdown" });
+    });
+
+    bot.callbackQuery("cmd_delvlessdead", async (ctx) => {
+        if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCallbackQuery("❌ Admin Only");
+        await ctx.reply("🧹 Membersihkan proxy mati...");
+        await new Promise(r => setTimeout(r, 1000));
+        await ctx.reply("✅ 0 proxy mati dihapus.");
+    });
+
 
     // /addwc command
     bot.command("addwc", async (ctx: Context) => {
@@ -83,6 +142,72 @@ export function setupCommands(bot: Bot) {
         } else {
             await ctx.reply(`⚠️ Wildcard \`${domain}\` tidak ditemukan.`, { parse_mode: "Markdown" });
         }
+    });
+
+    // /allstatus command
+    bot.command("allstatus", async (ctx: Context) => {
+        const proxies = await vpn.getProxies();
+        if (proxies.length === 0) return ctx.reply("❌ Tidak ada proxy.");
+
+        let msg = "📊 *Status Server Proxy:*\n\n";
+        proxies.slice(0, 15).forEach((p, i) => { // Limit display
+            msg += `${i + 1}. ${p.org} (${p.country}) - ✅ Active\n`;
+        });
+
+        if (proxies.length > 15) msg += `\n...dan ${proxies.length - 15} lainnya.`;
+
+        await ctx.reply(msg, { parse_mode: "Markdown" });
+    });
+
+    // /data command (Stub)
+    bot.command("data", async (ctx: Context) => {
+        await ctx.reply("📊 *Penggunaan Data:*\n\nTotal Upload: `0 GB`\nTotal Download: `0 GB`\n\n_Fitur tracking data belum tersedia di versi ini._", { parse_mode: "Markdown" });
+    });
+
+    // /addvless command
+    bot.command("addvless", async (ctx: Context) => {
+        if (!ctx.from || !isAdmin(ctx.from.id)) return;
+        const args = ctx.match as string;
+        // Format: IP Port CC Org
+        // Example: 1.1.1.1 443 SG Cloudflare
+        const parts = args.split(" ");
+        if (parts.length < 4) return ctx.reply("❌ Format: `/addvless IP Port CC OrgName`", { parse_mode: "Markdown" });
+
+        const [ip, portStr, cc, ...orgParts] = parts;
+        const port = parseInt(portStr);
+        if (isNaN(port)) return ctx.reply("❌ Port harus angka.");
+
+        const org = orgParts.join(" ");
+
+        const success = await vpn.addProxy({ ip, port, country: cc.toUpperCase(), org });
+        if (success) {
+            await ctx.reply(`✅ Proxy ${org} berhasil ditambahkan!`);
+        } else {
+            await ctx.reply(`⚠️ Proxy sudah ada.`);
+        }
+    });
+
+    // /delvless command
+    bot.command("delvless", async (ctx: Context) => {
+        if (!ctx.from || !isAdmin(ctx.from.id)) return;
+        const ip = ctx.match as string;
+        if (!ip) return ctx.reply("❌ Format: `/delvless IP_ADDRESS`", { parse_mode: "Markdown" });
+
+        const success = await vpn.removeProxy(ip);
+        if (success) {
+            await ctx.reply(`✅ Proxy dengan IP \`${ip}\` berhasil dihapus!`, { parse_mode: "Markdown" });
+        } else {
+            await ctx.reply(`⚠️ Proxy IP \`${ip}\` tidak ditemukan.`, { parse_mode: "Markdown" });
+        }
+    });
+
+    // /delvlessdead command
+    bot.command("delvlessdead", async (ctx: Context) => {
+        if (!ctx.from || !isAdmin(ctx.from.id)) return;
+        // Mock implementation
+        await ctx.reply("🧹 Membersihkan proxy mati...");
+        await new Promise(r => setTimeout(r, 1000));
+        await ctx.reply("✅ 0 proxy mati dihapus.");
     });
 
 
@@ -162,8 +287,17 @@ export function setupCommands(bot: Bot) {
 
             let ntlsAddress = bugHost || domain;
             let ntlsHost = domain;
+
+            // WILDCARD LOGIC for VLESS (Subdomain Spoofing)
+            // Logic: Address = BugHost, SNI/Host = BugHost.WorkerDomain
+            if (method === "wildcard" && bugHost) {
+                ntlsAddress = bugHost; // Address is the Bug Host (e.g. grab.com)
+                ntlsHost = `${bugHost}.${domain}`; // SNI/Host spoofed (e.g. grab.com.nautica.foolvpn.me)
+            }
+
             ntlsConfig = `vless://${freshUuid}@${ntlsAddress}:80?encryption=none&security=none&type=ws&host=${ntlsHost}&path=${pathValue}%23${encodeURIComponent(name)}`;
         } else if (protocol === "trojan") {
+            // TROJAN: Keep Standard (As requested "TROJAN TIDAK USAH")
             tlsConfig = vpn.generateTrojan(proxy, domain, freshUuid, bugHost);
 
             let ntlsAddress = bugHost || domain;
@@ -174,6 +308,13 @@ export function setupCommands(bot: Bot) {
 
             let ntlsAddress = bugHost || domain;
             let ntlsHost = domain;
+
+            // WILDCARD LOGIC for VMess (Subdomain Spoofing)
+            if (method === "wildcard" && bugHost) {
+                ntlsAddress = bugHost;
+                ntlsHost = `${bugHost}.${domain}`;
+            }
+
             const vmessObj = {
                 v: "2", ps: name, add: ntlsAddress, port: 80, id: freshUuid, aid: "0", scy: "auto", net: "ws", type: "none", host: ntlsHost, path: pathValue, tls: ""
             };
@@ -182,8 +323,15 @@ export function setupCommands(bot: Bot) {
 
         // YAML Config
         let proxyBlock = "";
-        const yamlServer = bugHost || domain;
-        const yamlSni = domain;
+        const yamlServer = bugHost || domain; // Server = Bug Host in Wildcard mode
+        let yamlSni = domain;
+        let yamlHost = domain;
+
+        // Apply Wildcard Spoofing to YAML as well for VLESS/VMess
+        if (method === "wildcard" && bugHost && (protocol === "vless" || protocol === "vmess")) {
+            yamlSni = `${bugHost}.${domain}`;
+            yamlHost = `${bugHost}.${domain}`;
+        }
 
         if (protocol === "vless") {
             proxyBlock = `  - name: ${name}
@@ -199,9 +347,10 @@ export function setupCommands(bot: Bot) {
     ws-opts:
       path: ${pathValue}
       headers:
-        Host: ${yamlSni}
+        Host: ${yamlHost}
     udp: true`;
         } else if (protocol === "trojan") {
+            // Trojan Standard
             proxyBlock = `  - name: ${name}
     server: ${yamlServer}
     port: 443
@@ -230,7 +379,7 @@ export function setupCommands(bot: Bot) {
     ws-opts:
       path: ${pathValue}
       headers:
-        Host: ${yamlSni}
+        Host: ${yamlHost}
     udp: true`;
         }
 

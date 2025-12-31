@@ -4,12 +4,63 @@ import { ITEMS_PER_PAGE } from "../utils/helpers";
 import { ProxyItem } from "../vpn/nautica";
 
 // Main Menu
-export const mainMenuKeyboard = new InlineKeyboard()
-    .text("🚀 Generate Proxy", "cmd_proxy")
-    .text("📊 Status", "cmd_status")
-    .row()
-    .text("📋 Subs Link", "cmd_sub")
-    .text("❓ Help", "cmd_help");
+// Main Menu Commands Definition
+export const MENU_COMMANDS = [
+    // User Commands
+    { text: "🚀 Generate Proxy", custom_id: "cmd_proxy" },
+    { text: "🎲 Random Proxy", custom_id: "cmd_proxyrandom" },
+    { text: "🌏 List VLESS", custom_id: "cmd_listvless" },
+    { text: "🔗 Get Sub Link", custom_id: "cmd_sub" },
+    { text: "📜 List Wildcard", custom_id: "cmd_listwc" },
+    { text: "➕ Add Wildcard", custom_id: "cmd_addwc" }, // Requires input usually, but we can prompt
+    { text: "📊 Check Status", custom_id: "cmd_allstatus" },
+    { text: "📉 Data Usage", custom_id: "cmd_data" },
+    // Admin Commands (Will be filtered in logic if needed, or shown all)
+    { text: "👷 Deploy Node", custom_id: "cmd_deploynode" },
+    { text: "➕ Add VLESS", custom_id: "cmd_addvless" },
+    { text: "🗑️ Del VLESS", custom_id: "cmd_delvless" },
+    { text: "🧹 Clean Dead", custom_id: "cmd_delvlessdead" },
+    { text: "❌ Del Wildcard", custom_id: "cmd_delwc" }
+];
+
+// Paginated Main Menu Keyboard
+export function getMainMenuKeyboard(page: number = 0) {
+    const itemsPerPage = 4;
+    const totalPages = Math.ceil(MENU_COMMANDS.length / itemsPerPage);
+
+    // Normalize page
+    if (page < 0) page = totalPages - 1;
+    if (page >= totalPages) page = 0;
+
+    const start = page * itemsPerPage;
+    const end = start + itemsPerPage;
+    const currentItems = MENU_COMMANDS.slice(start, end);
+
+    const keyboard = new InlineKeyboard();
+
+    // 2x2 Grid
+    let colCount = 0;
+    for (const item of currentItems) {
+        keyboard.text(item.text, item.custom_id);
+        colCount++;
+        if (colCount % 2 === 0) keyboard.row();
+    }
+    if (colCount % 2 !== 0) keyboard.row();
+
+    // Navigation Row
+    const prevPage = page > 0 ? page - 1 : totalPages - 1;
+    const nextPage = page < totalPages - 1 ? page + 1 : 0;
+
+    keyboard
+        .text("⬅️ Back", `menu_page:${prevPage}`)
+        .text(`${page + 1}/${totalPages}`, "noop")
+        .text("Next ➡️", `menu_page:${nextPage}`);
+
+    return keyboard;
+}
+
+// Deprecated old keyboard, mapped to new function for compatibility
+export const mainMenuKeyboard = getMainMenuKeyboard(0);
 
 // Inject Method Keyboard (New)
 export const injectMethodKeyboard = new InlineKeyboard()

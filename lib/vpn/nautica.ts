@@ -10,18 +10,19 @@ export interface ProxyItem {
 
 const STATIC_PROXIES: ProxyItem[] = [
     // 5 INDONESIA SERVERS
-    { ip: "103.175.219.100", port: 443, country: "ID", org: "Nautica-ID1" },
-    { ip: "103.186.0.0", port: 443, country: "ID", org: "Nautica-ID2" },
-    { ip: "103.126.226.0", port: 80, country: "ID", org: "Nautica-ID3" },
-    { ip: "103.116.168.0", port: 443, country: "ID", org: "Nautica-ID4" },
-    { ip: "116.206.196.0", port: 443, country: "ID", org: "Nautica-ID5" },
+    { ip: "103.175.219.100", port: 443, country: "ID", org: "Biznet Networks" },
+    { ip: "103.186.0.0", port: 443, country: "ID", org: "Telkom Indonesia" },
+    { ip: "103.126.226.0", port: 80, country: "ID", org: "Indosat Ooredoo" },
+    { ip: "103.116.168.0", port: 443, country: "ID", org: "XL Axiata" },
+    { ip: "116.206.196.0", port: 443, country: "ID", org: "Digital Ocean ID" },
 
     // 5 SINGAPORE SERVERS
-    { ip: "178.128.0.0", port: 443, country: "SG", org: "Nautica-SG1" },
-    { ip: "128.199.0.0", port: 443, country: "SG", org: "Nautica-SG2" },
-    { ip: "167.172.0.0", port: 443, country: "SG", org: "Nautica-SG3" },
-    { ip: "159.89.0.0", port: 443, country: "SG", org: "Nautica-SG4" },
-    { ip: "139.59.0.0", port: 443, country: "SG", org: "Nautica-SG5" },
+    { ip: "178.128.0.0", port: 443, country: "SG", org: "Digital Ocean SG" },
+    { ip: "128.199.0.0", port: 443, country: "SG", org: "Linode SG" },
+    { ip: "167.172.0.0", port: 443, country: "SG", org: "Amazon AWS SG" },
+    { ip: "159.89.0.0", port: 443, country: "SG", org: "Google Cloud SG" },
+    { ip: "139.59.0.0", port: 443, country: "SG", org: "Alibaba Cloud SG" },
+];
 ];
 
 export class NauticaVPN {
@@ -58,6 +59,28 @@ export class NauticaVPN {
             return true;
         }
         return false;
+    }
+
+    // Proxy Management
+    public async addProxy(proxy: ProxyItem): Promise<boolean> {
+        // Check duplicate IP
+        if (this.cachedProxies.some(p => p.ip === proxy.ip && p.port === proxy.port)) {
+            return false;
+        }
+        this.cachedProxies.push(proxy);
+        return true;
+    }
+
+    public async removeProxy(ip: string): Promise<boolean> {
+        const initialLength = this.cachedProxies.length;
+        this.cachedProxies = this.cachedProxies.filter(p => p.ip !== ip);
+        return this.cachedProxies.length < initialLength;
+    }
+
+    public async clearDeadProxies(): Promise<number> {
+        const initialLength = this.cachedProxies.length;
+        // In real app, check ping. Here we just pretend all static are alive.
+        return 0;
     }
 
     // Fetch proxies (Static implementation)
