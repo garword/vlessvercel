@@ -22,15 +22,19 @@ export function setupCommands(bot: Bot) {
         }
 
         await ctx.api.setMyCommands([
-            { command: "start", description: "🏠 Main Menu" },
-            { command: "proxy", description: "🚀 Generate Config" },
-            { command: "proxyrandom", description: "🎲 Random Config" },
-            { command: "listvless", description: "🌏 List Servers" },
-            { command: "allstatus", description: "📊 Check Status" },
-            { command: "getsub", description: "🔗 Subscription" },
-            { command: "addwc", description: "➕ Add Wildcard" },
-            { command: "deploynode", description: "👷 Deploy Node (Admin)" },
-            { command: "data", description: "📉 Data Usage" }
+            { command: "start", description: "🏠 Menu Utama & Bantuan" },
+            { command: "proxy", description: "🚀 Buat Config Manual" },
+            { command: "proxyrandom", description: "🎲 Config Random Cepat" },
+            { command: "listvless", description: "🌏 Daftar Server Tersedia" },
+            { command: "allstatus", description: "📊 Cek Status Health" },
+            { command: "getsub", description: "🔗 Link Subscription" },
+            { command: "addwc", description: "➕ Add Wildcard (Admin)" },
+            { command: "delwc", description: "❌ Del Wildcard (Admin)" },
+            { command: "addvless", description: "➕ Add Server (Admin)" },
+            { command: "delvless", description: "🗑️ Del Server (Admin)" },
+            { command: "delvlessdead", description: "🧹 Clean Dead (Admin)" },
+            { command: "deploynode", description: "👷 Deploy Worker (Admin)" },
+            { command: "setcommands", description: "⚙️ Refresh Menu (Admin)" }
         ]);
 
         await ctx.reply("✅ Bot menu commands have been updated!");
