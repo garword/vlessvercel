@@ -23,7 +23,7 @@ const STATIC_PROXIES: ProxyItem[] = [
     { ip: "159.89.0.0", port: 443, country: "SG", org: "Google Cloud SG" },
     { ip: "139.59.0.0", port: 443, country: "SG", org: "Alibaba Cloud SG" },
 ];
-];
+
 
 export class NauticaVPN {
     private static instance: NauticaVPN;
