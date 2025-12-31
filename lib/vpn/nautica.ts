@@ -29,9 +29,12 @@ export class NauticaVPN {
     private static instance: NauticaVPN;
     private cachedProxies: ProxyItem[] = [];
     private wildcards: string[] = ["bug.com", "quiz.vidio.com", "cdn.discordapp.com"]; // Default wildcards
+    private lastFetch: number = 0;
+    private readonly PRX_BANK_URL = "https://raw.githubusercontent.com/FoolVPN-ID/Nautica/main/proxyList.txt";
+    private readonly CACHE_TTL = 60 * 1000; // 1 Minute Cache
 
     private constructor() {
-        this.cachedProxies = [...STATIC_PROXIES]; // Load static proxies
+        this.cachedProxies = [...STATIC_PROXIES]; // Initial Static Load
     }
 
     public static getInstance(): NauticaVPN {
@@ -61,8 +64,53 @@ export class NauticaVPN {
         return false;
     }
 
+    // Fetch Proxies from Remote
+    private async fetchProxies(): Promise<void> {
+        try {
+            console.log("Fetching proxies from:", this.PRX_BANK_URL);
+            const res = await fetch(this.PRX_BANK_URL);
+            if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+
+            const text = await res.text();
+            const lines = text.split("\n").filter(l => l.trim().length > 0);
+            const newProxies: ProxyItem[] = [];
+
+            for (const line of lines) {
+                // Format: IP,Port,CC,Org
+                const parts = line.split(",");
+                if (parts.length >= 4) {
+                    const [ip, portStr, country, org] = parts;
+                    const port = parseInt(portStr.trim());
+                    if (!isNaN(port)) {
+                        newProxies.push({
+                            ip: ip.trim(),
+                            port: port,
+                            country: country.trim().toUpperCase(),
+                            org: org.trim()
+                        });
+                    }
+                }
+            }
+
+            if (newProxies.length > 0) {
+                this.cachedProxies = newProxies;
+                this.lastFetch = Date.now();
+                console.log(`Fetched ${newProxies.length} proxies.`);
+            }
+        } catch (error) {
+            console.error("Failed to fetch proxies, using cache/static:", error);
+            // If fetch fails and no cache, ensure we have static
+            if (this.cachedProxies.length === 0) {
+                this.cachedProxies = [...STATIC_PROXIES];
+            }
+        }
+    }
+
     // Proxy Management
     public async addProxy(proxy: ProxyItem): Promise<boolean> {
+        // Force Ensure Loaded
+        if (this.cachedProxies.length === 0) this.cachedProxies = [...STATIC_PROXIES];
+
         // Check duplicate IP
         if (this.cachedProxies.some(p => p.ip === proxy.ip && p.port === proxy.port)) {
             return false;
@@ -78,15 +126,21 @@ export class NauticaVPN {
     }
 
     public async clearDeadProxies(): Promise<number> {
-        const initialLength = this.cachedProxies.length;
         // In real app, check ping. Here we just pretend all static are alive.
         return 0;
     }
 
-    // Fetch proxies (Static implementation)
+    // Fetch proxies (Dynamic Implementation)
     public async getProxies(countryCode?: string): Promise<ProxyItem[]> {
+        // Check Cache
+        if (Date.now() - this.lastFetch > this.CACHE_TTL || this.cachedProxies.length === 0) {
+            await this.fetchProxies();
+        }
+
         let proxies = this.cachedProxies;
         if (countryCode) {
+            if (countryCode === "RANDOM") return shuffleArray(proxies); // Special case
+
             // Support comma separated
             const codes = countryCode.toUpperCase().split(",");
             proxies = proxies.filter(p => codes.includes(p.country));
@@ -96,7 +150,9 @@ export class NauticaVPN {
 
     // Helper to get top proxies (returns filtered static list)
     public async getTopProxies(refresh: boolean = false): Promise<ProxyItem[]> {
-        // Since we use static, refresh doesn't mean much, just re-shuffle
+        if (refresh || Date.now() - this.lastFetch > this.CACHE_TTL) {
+            await this.fetchProxies();
+        }
         return this.getProxies();
     }
 
