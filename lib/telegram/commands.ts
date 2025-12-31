@@ -14,6 +14,25 @@ export function setupCommands(bot: Bot) {
         return id.toString() === adminId;
     };
 
+    // /setcommands - Helper to set the Telegram Menu Button
+    bot.command("setcommands", async (ctx: Context) => {
+        if (!ctx.from || !isAdmin(ctx.from.id)) return;
+
+        await ctx.api.setMyCommands([
+            { command: "start", description: "🏠 Main Menu" },
+            { command: "proxy", description: "🚀 Generate Config" },
+            { command: "proxyrandom", description: "🎲 Random Config" },
+            { command: "listvless", description: "🌏 List Servers" },
+            { command: "allstatus", description: "📊 Check Status" },
+            { command: "getsub", description: "🔗 Subscription" },
+            { command: "addwc", description: "➕ Add Wildcard" },
+            { command: "deploynode", description: "👷 Deploy Node (Admin)" },
+            { command: "data", description: "📉 Data Usage" }
+        ]);
+
+        await ctx.reply("✅ Bot menu commands have been updated!");
+    });
+
     // /start command
     bot.command("start", async (ctx: Context) => {
         const welcomeMsg =
