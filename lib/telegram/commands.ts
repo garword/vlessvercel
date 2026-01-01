@@ -473,8 +473,8 @@ export function setupCommands(bot: Bot) {
 
     const sessions: Record<number, InteractiveSession> = {};
 
-    // /mycf command - Manage Personal Accounts
-    bot.command("mycf", async (ctx: Context) => {
+    // /mycf command & callback - Manage Personal Accounts
+    const handleMyCF = async (ctx: Context) => {
         if (!ctx.from) return;
         const userId = ctx.from.id.toString();
 
@@ -492,12 +492,22 @@ export function setupCommands(bot: Bot) {
 
         const keyboard = new InlineKeyboard()
             .text("➕ Tambah Akun", "mycf_add")
-            .text("🗑️ Hapus Akun", "mycf_del") // We'll implement delete flow later or via command
+            .text("🗑️ Hapus Akun", "mycf_del")
             .row()
             .text("🔙 Kembali", "menu_page:0");
 
-        await ctx.reply(msg, { parse_mode: "Markdown", reply_markup: keyboard });
-    });
+        // Use reply or editMessageText depending on context (optional, but reply works for both generally if new message desired, or edit for seamlessness)
+        // Main menu usually spawns new message, but callback might want to edit.
+        // Let's stick to reply for now to be safe, or check update type.
+        if (ctx.callbackQuery) {
+            await ctx.editMessageText(msg, { parse_mode: "Markdown", reply_markup: keyboard });
+        } else {
+            await ctx.reply(msg, { parse_mode: "Markdown", reply_markup: keyboard });
+        }
+    };
+
+    bot.command("mycf", handleMyCF);
+    bot.callbackQuery("cmd_mycf", handleMyCF);
 
     // Handle /mycf actions
     bot.callbackQuery("mycf_add", async (ctx) => {
