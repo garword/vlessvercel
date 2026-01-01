@@ -161,7 +161,16 @@ export class NauticaVPN {
         if (refresh || Date.now() - this.lastFetch > this.CACHE_TTL) {
             await this.fetchProxies();
         }
-        return this.getProxies();
+
+        // Filter ONLY 3 ID and 3 SG
+        const idProxies = this.cachedProxies.filter(p => p.country === "ID").slice(0, 3);
+        const sgProxies = this.cachedProxies.filter(p => p.country === "SG").slice(0, 3);
+
+        // Combine (ID first, then SG)
+        const combined = [...idProxies, ...sgProxies];
+
+        // Validation: If not enough, try to fill? No, strictly what's available.
+        return combined;
     }
 
 
