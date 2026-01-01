@@ -2,7 +2,7 @@
 import { Bot, Context, InputFile, InlineKeyboard } from "grammy";
 import { NauticaVPN } from "../vpn/nautica";
 import { CFAccountManager } from "../deploy/cf_manager";
-import { mainMenuKeyboard, getMainMenuKeyboard, getCountryKeyboard, getFormatKeyboard, getInjectMethodKeyboard, getInjectMethodSpecificKeyboard, protocolSelectionKeyboard, subFormatKeyboard, getProxyListKeyboard, getProtocolSelectionSpecificKeyboard } from "./keyboards";
+import { mainMenuKeyboard, getMainMenuKeyboard, getCountryKeyboard, getFormatKeyboard, getInjectMethodKeyboard, getInjectMethodSpecificKeyboard, protocolSelectionKeyboard, subFormatKeyboard, getProxyListKeyboard, getProtocolSelectionSpecificKeyboard, getFormatSpecificKeyboard, getSubFormatKeyboard } from "./keyboards";
 import { getFlagEmoji, generateQRCode } from "../utils/helpers";
 import { deployWorker, createWorkerRoute, putWorkerSecrets } from "../deploy/cf_api";
 
@@ -278,7 +278,7 @@ export function setupCommands(bot: Bot) {
         const protocol = ctx.match[1];
         await ctx.editMessageText(`✅ Protokol Dipilih: *${protocol.toUpperCase()}*\n\n🔧 *Pilih metode inject:*`, {
             parse_mode: "Markdown",
-            reply_markup: getInjectMethodKeyboard(protocol)
+            reply_markup: getInjectMethodKeyboard(protocol, "cmd_proxy") // Back to START (or list?)
         });
     });
 
@@ -358,49 +358,58 @@ export function setupCommands(bot: Bot) {
 
         await ctx.replyWithPhoto(new InputFile(qrBuffer, "qrcode.png"), {
             caption: caption,
-            parse_mode: "Markdown"
+            parse_mode: "Markdown",
+            reply_markup: new InlineKeyboard()
+                .text("↻ Buat Lagi", "cmd_proxy")
+                .text("🏠 Menu Utama", "menu_page:0")
         });
     });
 
     // /listvless command
+    // /listvless command - Interactive Button List
     bot.command("listvless", async (ctx: Context) => {
-        // Use getTopProxies which returns 10 items (5 ID, 5 SG priority)
-        const proxies = await vpn.getTopProxies();
+        // Use all proxies (or top 20? for now let's just get them all and paginate)
+        // Note: fetchFromDB() or getProxies() might need an option to return ALL for pagination
+        // Current getTopProxies returns 6. We should use getProxies() which returns all cached.
+        const proxies = await vpn.getProxies();
 
         if (proxies.length === 0) {
             return ctx.reply("❌ Tidak ada proxy tersedia.");
         }
 
-        let msg = `📋 *Daftar VLESS:*\n\n\`copy\n`;
-
-        proxies.forEach((proxy, index) => {
-            const num = index + 1;
-            const flag = getFlagEmoji(proxy.country);
-            // Name: (CC) Org Flag
-            const name = `(${proxy.country}) ${proxy.org} ${flag}`;
-
-            // Path: /cc-org (first 4 chars of org)
-            const sanitizedOrg = proxy.org.replace(/[^a-zA-Z0-9]/g, "").substring(0, 4).toLowerCase();
-            const pathValue = `/${proxy.country.toLowerCase()}-${sanitizedOrg}`;
-
-            // Proxy: IP:Port
-            const proxyAddress = `${proxy.ip}:${proxy.port}`;
-
-            msg += `${num}.${name}\n` +
-                `Path: ${pathValue}\n` +
-                `Proxy: ${proxyAddress}\n\n`;
+        await ctx.reply("🌏 *Daftar VLESS Tersedia:*\n\n_Pilih server di bawah untuk membuat akun:_ " + `(Total: ${proxies.length})`, {
+            parse_mode: "Markdown",
+            reply_markup: getProxyListKeyboard(proxies, 0)
         });
+    });
 
-        msg += `\``; // End monospace block
+    // Handle Proxy List Pagination
+    bot.callbackQuery(/^list_vless:(.+)$/, async (ctx) => {
+        const page = parseInt(ctx.match[1]);
+        const proxies = await vpn.getProxies();
 
-        await ctx.reply(msg, { parse_mode: "Markdown" });
+        await ctx.editMessageReplyMarkup({
+            reply_markup: getProxyListKeyboard(proxies, page)
+        });
+    });
+
+    // Handle Specific Proxy Selection from List
+    bot.callbackQuery(/^sel_prx:(.+):(.+)$/, async (ctx) => {
+        const ip = ctx.match[1];
+        const port = ctx.match[2];
+
+        // Show Format Selection for this proxy
+        await ctx.editMessageText(`✅ Server Dipilih: \`${ip}:${port}\`\n\n📱 *Pilih Format Config:*`, {
+            parse_mode: "Markdown",
+            reply_markup: getFormatSpecificKeyboard(ip, port, 'auto')
+        });
     });
 
     // /getsub command
     bot.command("getsub", async (ctx: Context) => {
-        await ctx.reply("Silakan pilih tipe konfigurasi:", {
+        await ctx.reply("🔗 *Subscription Link Generator*\n\nSilakan pilih tipe konfigurasi:", {
             parse_mode: "Markdown",
-            reply_markup: subFormatKeyboard
+            reply_markup: getSubFormatKeyboard()
         });
     });
 
@@ -418,7 +427,10 @@ export function setupCommands(bot: Bot) {
             `🔗 \`${apiUrl}\`\n\n` +
             `_Copy link di atas ke aplikasi Anda_`;
 
-        await ctx.editMessageText(msg, { parse_mode: "Markdown" });
+        await ctx.editMessageText(msg, {
+            parse_mode: "Markdown",
+            reply_markup: new InlineKeyboard().text("↻ Buat Lagi", "cmd_sub").text("🏠 Menu Utama", "menu_page:0")
+        });
     });
 
     // Handle Country Selection Pagination
@@ -496,8 +508,43 @@ export function setupCommands(bot: Bot) {
             msgToDelete: [ctx.callbackQuery?.message?.message_id || 0]
         };
 
-        const qMsg = await ctx.reply("📧 *Masukkan Email Akun Cloudflare Anda:*", { parse_mode: "Markdown" });
+        const qMsg = await ctx.reply("📧 *Masukkan Email Akun Cloudflare Anda:*", {
+            parse_mode: "Markdown",
+            reply_markup: new InlineKeyboard().text("❌ Batal / Kembali", "cancel_session")
+        });
         sessions[ctx.from.id].msgToDelete.push(qMsg.message_id);
+    });
+
+    // Handle Manual Input Start
+    bot.callbackQuery("cmd_manual_input", async (ctx) => {
+        if (!ctx.from) return;
+
+        sessions[ctx.from.id] = {
+            type: 'manual_input',
+            step: 1,
+            msgToDelete: [ctx.callbackQuery?.message?.message_id || 0]
+        };
+
+        const qMsg = await ctx.reply("✏️ *Masukkan Proxy Manual:*\nFormat: `IP:PORT` (contoh: `1.1.1.1:443`)", {
+            parse_mode: "Markdown",
+            reply_markup: new InlineKeyboard().text("❌ Batal / Kembali", "cancel_session")
+        });
+        sessions[ctx.from.id].msgToDelete.push(qMsg.message_id);
+    });
+
+    // Universal Cancel Session
+    bot.callbackQuery("cancel_session", async (ctx) => {
+        if (!ctx.from) return;
+        if (sessions[ctx.from.id]) {
+            const session = sessions[ctx.from.id];
+            // Try to delete session messages
+            for (const msgId of session.msgToDelete) {
+                try { await ctx.api.deleteMessage(ctx.chat.id, msgId); } catch (e) { }
+            }
+            delete sessions[ctx.from.id];
+        }
+        // Go back to main menu
+        await ctx.reply("🏠 *Menu Utama*", { parse_mode: "Markdown", reply_markup: getMainMenuKeyboard(0) });
     });
 
     // /deploynode command - Interactive
