@@ -30,11 +30,31 @@ export class NauticaVPN {
     private cachedProxies: ProxyItem[] = [];
     private wildcards: string[] = ["bug.com", "quiz.vidio.com", "cdn.discordapp.com"]; // Default wildcards
     private lastFetch: number = 0;
-    private readonly PRX_BANK_URL = "https://raw.githubusercontent.com/FoolVPN-ID/Nautica/main/proxyList.txt";
-    private readonly CACHE_TTL = 60 * 1000; // 1 Minute Cache
+
+    // TURSO DB Integration
+    private dbClient: any = null;
+    private readonly DB_CACHE_TTL = 30 * 1000; // 30s Cache
 
     private constructor() {
-        this.cachedProxies = [...STATIC_PROXIES]; // Initial Static Load
+        // Initialize Turso
+        const url = process.env.TURSO_DATABASE_URL;
+        const authToken = process.env.TURSO_AUTH_TOKEN;
+
+        if (url && authToken) {
+            try {
+                // Dynamically import or require to avoid build issues if package missing in some envs
+                const { createClient } = require("@libsql/client");
+                this.dbClient = createClient({ url, authToken });
+                console.log("✅ NauticaVPN connected to Turso DB.");
+            } catch (e) {
+                console.error("❌ Failed to init Turso client:", e);
+            }
+        } else {
+            console.warn("⚠️ TURSO_DATABASE_URL or TURSO_AUTH_TOKEN missing.");
+        }
+
+        // Initial Static Load (as absolute fallback)
+        this.cachedProxies = [...STATIC_PROXIES];
     }
 
     public static getInstance(): NauticaVPN {
@@ -64,53 +84,26 @@ export class NauticaVPN {
         return false;
     }
 
-    // Fetch Proxies from Remote
-    private async fetchProxies(): Promise<void> {
+    // Fetch "Elite 6" from Turso
+    private async fetchFromDB(): Promise<void> {
+        if (!this.dbClient) return;
+
         try {
-            console.log("Fetching proxies from:", this.PRX_BANK_URL);
+            const rs = await this.dbClient.execute("SELECT * FROM active_nodes ORDER BY slot_id");
+            if (rs.rows.length > 0) {
+                const dbProxies: ProxyItem[] = rs.rows.map((row: any) => ({
+                    ip: row.proxy_ip,
+                    port: row.proxy_port,
+                    country: row.slot_id.startsWith("ID") ? "ID" : "SG",
+                    org: row.display_name // STRICT: Use exact name from DB (which comes from GitHub Org)
+                }));
 
-            // Hard Timeout using Promise.race (5s) to guarantee fallback
-            const fetchPromise = fetch(this.PRX_BANK_URL);
-            const timeoutPromise = new Promise<Response>((_, reject) =>
-                setTimeout(() => reject(new Error("Fetch Timeout")), 5000)
-            );
-
-            const res = await Promise.race([fetchPromise, timeoutPromise]);
-
-            if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
-
-            const text = await res.text();
-            const lines = text.split("\n").filter(l => l.trim().length > 0);
-            const newProxies: ProxyItem[] = [];
-
-            for (const line of lines) {
-                // Format: IP,Port,CC,Org
-                const parts = line.split(",");
-                if (parts.length >= 4) {
-                    const [ip, portStr, country, org] = parts;
-                    const port = parseInt(portStr.trim());
-                    if (!isNaN(port)) {
-                        newProxies.push({
-                            ip: ip.trim(),
-                            port: port,
-                            country: country.trim().toUpperCase(),
-                            org: org.trim()
-                        });
-                    }
-                }
-            }
-
-            if (newProxies.length > 0) {
-                this.cachedProxies = newProxies;
+                this.cachedProxies = dbProxies;
                 this.lastFetch = Date.now();
-                console.log(`Fetched ${newProxies.length} proxies.`);
+                console.log(`Fetched ${dbProxies.length} Elite Nodes from Turso.`);
             }
-        } catch (error) {
-            console.error("Failed to fetch proxies, using cache/static:", error);
-            // If fetch fails and no cache, ensure we have static
-            if (this.cachedProxies.length === 0) {
-                this.cachedProxies = [...STATIC_PROXIES];
-            }
+        } catch (e) {
+            console.error("Turso Fetch Error:", e);
         }
     }
 
@@ -138,11 +131,11 @@ export class NauticaVPN {
         return 0;
     }
 
-    // Fetch proxies (Dynamic Implementation)
+    // Get Active Proxies (Strict 6 from DB)
     public async getProxies(countryCode?: string): Promise<ProxyItem[]> {
-        // Check Cache
-        if (Date.now() - this.lastFetch > this.CACHE_TTL || this.cachedProxies.length === 0) {
-            await this.fetchProxies();
+        // Check DB Cache
+        if (this.dbClient && (Date.now() - this.lastFetch > this.DB_CACHE_TTL)) {
+            await this.fetchFromDB();
         }
 
         let proxies = this.cachedProxies;
@@ -156,21 +149,17 @@ export class NauticaVPN {
         return shuffleArray(proxies);
     }
 
-    // Helper to get top proxies (returns filtered static list)
+    // Helper to get top proxies (returns strictly the 6 elite nodes)
     public async getTopProxies(refresh: boolean = false): Promise<ProxyItem[]> {
-        if (refresh || Date.now() - this.lastFetch > this.CACHE_TTL) {
-            await this.fetchProxies();
+        if (refresh || (this.dbClient && Date.now() - this.lastFetch > this.DB_CACHE_TTL)) {
+            await this.fetchFromDB();
         }
 
-        // Filter ONLY 3 ID and 3 SG
-        const idProxies = this.cachedProxies.filter(p => p.country === "ID").slice(0, 3);
-        const sgProxies = this.cachedProxies.filter(p => p.country === "SG").slice(0, 3);
-
-        // Combine (ID first, then SG)
-        const combined = [...idProxies, ...sgProxies];
-
-        // Validation: If not enough, try to fill? No, strictly what's available.
-        return combined;
+        // Return exactly what is in cache (which should be the 6 elite nodes from DB)
+        // Sort by Country (ID first) is safe logic
+        const id = this.cachedProxies.filter(p => p.country === "ID");
+        const sg = this.cachedProxies.filter(p => p.country === "SG");
+        return [...id, ...sg];
     }
 
 
