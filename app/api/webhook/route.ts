@@ -27,6 +27,23 @@ export async function POST(req: Request) {
 }
 
 // Simple GET for checking status
+// Diagnostic GET endpoint
 export async function GET() {
-    return new Response("Nautica Bot (Vercel Edition) is Running!", { status: 200 });
+    try {
+        const token = process.env.BOT_TOKEN;
+        if (!token) return new Response("Error: BOT_TOKEN missing in Env.", { status: 500 });
+
+        // Try initializing
+        const botInstance = getBot();
+        const botInfo = await botInstance.api.getMe();
+
+        return new Response(JSON.stringify({
+            status: "ok",
+            message: "Nautica Bot is Running!",
+            bot: botInfo.username,
+            db_status: process.env.TURSO_DATABASE_URL ? "configured" : "missing_url"
+        }, null, 2), { status: 200, headers: { "Content-Type": "application/json" } });
+    } catch (e: any) {
+        return new Response(`Diagnostic Error: ${e.message}\nStack: ${e.stack}`, { status: 500 });
+    }
 }
