@@ -539,7 +539,7 @@ export function setupCommands(bot: Bot) {
             const session = sessions[ctx.from.id];
             // Try to delete session messages
             for (const msgId of session.msgToDelete) {
-                try { await ctx.api.deleteMessage(ctx.chat.id, msgId); } catch (e) { }
+                try { if (ctx.chat) await ctx.api.deleteMessage(ctx.chat.id, msgId); } catch (e) { }
             }
             delete sessions[ctx.from.id];
         }
