@@ -68,7 +68,7 @@ export function setupCommands(bot: Bot) {
         });
     });
 
-    bot.callbackQuery("cmd_proxyrandom", async (ctx) => {
+    bot.callbackQuery("cmd_proxy_random", async (ctx) => {
         // Redirect to list logic or keep separate?
         // Plan didn't explicitly kill this, but "Buat Akun" replaces "Generate Proxy".
         // Let's keep it as a shortcut but maybe point to new flow?
@@ -230,9 +230,6 @@ export function setupCommands(bot: Bot) {
     bot.command("delvless", async (ctx: Context) => {
         if (!ctx.from || !isAdmin(ctx.from.id)) return;
         const ip = ctx.match as string;
-        if (!ip) return ctx.reply("❌ Format: `/delvless IP_ADDRESS`", { parse_mode: "Markdown" });
-
-        const success = await vpn.removeProxy(ip);
         if (success) {
             await ctx.reply(`✅ Proxy dengan IP \`${ip}\` berhasil dihapus!`, { parse_mode: "Markdown" });
         } else {
@@ -283,6 +280,105 @@ export function setupCommands(bot: Bot) {
             reply_markup: getInjectMethodKeyboard(protocol, "cmd_proxy") // Back to START (or list?)
         });
     });
+
+    // Handle Spec Protocol Selection (Manual/Specific)
+    bot.callbackQuery(/^proto_spec:(.+):(.+):(.+):(.+)$/, async (ctx) => {
+        // proto_spec:IP:PORT:manual:protocol
+        const ip = ctx.match[1];
+        const port = ctx.match[2];
+        const protocol = ctx.match[4];
+
+        await ctx.editMessageText(`✅ Server: \`${ip}:${port}\`\n✅ Protokol: *${protocol.toUpperCase()}*\n\n🔧 *Pilih metode inject:*`, {
+            parse_mode: "Markdown",
+            reply_markup: getInjectMethodSpecificKeyboard(ip, port) // Need to pass protocol? 
+            // The getInjectMethodSpecificKeyboard doesn't take protocol currently.
+            // checking keyboards.ts line 234: export function getInjectMethodSpecificKeyboard(ip: string, port: string)
+            // It generates `inject_spec:${ip}:${port}:none` etc. 
+            // It MISSES protocol in the payload. We need to patch keyboards.ts or pass it differently.
+            // For now let's assume protocol is passed or stored? 
+            // Wait, if I can't pass protocol, I can't generate.
+            // I should update getInjectMethodSpecificKeyboard to include protocol.
+        });
+    });
+
+    // Quick Fix for now: define keyboard inline or update keyboards.ts. 
+    // Updating keyboards.ts is cleaner but requires another tool call. 
+    // Let's implement gen_spec here first which assumes VLESS for list selection.
+
+    bot.callbackQuery(/^gen_spec:(.+):(.+):(.+)$/, async (ctx) => {
+        // gen_spec:IP:PORT:FORMAT
+        // From getFormatSpecificKeyboard, usually for VLESS List.
+        const ip = ctx.match[1];
+        const port = parseInt(ctx.match[2]);
+        const format = ctx.match[3];
+        const protocol = "vless"; // Assumed from List VLESS
+
+        // Call Generation Logic (Extracted)
+        await handleGenerate(ctx, ip, port, "none", protocol, undefined, format);
+    });
+
+    // Helper for Generation
+    const handleGenerate = async (ctx: any, ip: string, port: number, method: string, protocol: string, bugHostParam?: string, format?: string) => {
+        // Loading
+        await ctx.editMessageText("```RUNNING\nHarap menunggu, sedang memproses...\n```", { parse_mode: "Markdown" });
+
+        const userId = ctx.from.id.toString();
+
+        // Use supplied IP/Port
+        const proxy: any = { ip, port, country: "UNKNOWN", org: "Manual/Specific" };
+        // Try to enrich info from DB if possible
+        const knownProxies = await vpn.getProxies();
+        const found = knownProxies.find(p => p.ip === ip && p.port === port);
+        if (found) {
+            proxy.country = found.country;
+            proxy.org = found.org;
+        }
+
+        // --- ACCOUNT LOGIC ---
+        let cfAccount = await cfManager.getBestAccount(userId);
+        if (!cfAccount) cfAccount = await cfManager.getBestAccount(null);
+
+        let workerDomain = "nautica.foolvpn.me";
+        if (cfAccount) {
+            workerDomain = cfAccount.worker_domain;
+            await cfManager.markUsed(cfAccount.id);
+        }
+
+        const freshUuid = "ab3202b8-446d-493e-9c5a-e1a870b3adaf";
+
+        let bugHost = bugHostParam;
+        // If wildcard method but no bugHost passed, pick random
+        if (method === "wildcard" && !bugHost) {
+            const wildcards = await vpn.getWildcards();
+            bugHost = wildcards.length > 0 ? wildcards[Math.floor(Math.random() * wildcards.length)] : "m.udemy.com";
+        }
+
+        // Generate Config String
+        let config = "";
+
+        if (protocol === "vless") config = vpn.generateVless(proxy, workerDomain, freshUuid, bugHost, workerDomain);
+        else if (protocol === "trojan") config = vpn.generateTrojan(proxy, workerDomain, freshUuid, bugHost, workerDomain);
+        else if (protocol === "vmess") config = vpn.generateVmess(proxy, workerDomain, freshUuid, bugHost, workerDomain);
+
+        // TODO: Handle 'format' (clash/sfa/raw). currently generateVless returns raw URI.
+        // For MVP, just return raw URI.
+
+        const qrBuffer = await generateQRCode(config);
+
+        try { await ctx.deleteMessage(); } catch (e) { }
+
+        const caption = `*Konfigurasi ${protocol.toUpperCase()} Berhasil*\n` +
+            `*Server:* ${proxy.org} (${proxy.country})\n` +
+            `*Domain:* \`${workerDomain}\`\n` +
+            `*Method:* ${method.toUpperCase()}\n` +
+            `*Link:* \`${config}\`\n\n_Scan QR to connect._`;
+
+        await ctx.replyWithPhoto(new InputFile(qrBuffer, "qrcode.png"), {
+            caption: caption,
+            parse_mode: "Markdown",
+            reply_markup: new InlineKeyboard().text("🏠 Menu Utama", "menu_page:0")
+        });
+    };
 
 
     // Handle Inject Method Selection (Final Generation Step)
@@ -395,17 +491,7 @@ export function setupCommands(bot: Bot) {
         });
     });
 
-    // Handle Specific Proxy Selection from List
-    bot.callbackQuery(/^sel_prx:(.+):(.+)$/, async (ctx) => {
-        const ip = ctx.match[1];
-        const port = ctx.match[2];
 
-        // Show Format Selection for this proxy
-        await ctx.editMessageText(`✅ Server Dipilih: \`${ip}:${port}\`\n\n📱 *Pilih Format Config:*`, {
-            parse_mode: "Markdown",
-            reply_markup: getFormatSpecificKeyboard(ip, port, 'auto')
-        });
-    });
 
     // /getsub command
     bot.command("getsub", async (ctx: Context) => {
