@@ -3,7 +3,8 @@ import { VPN_SCRIPT } from "../templates/worker_code";
 export async function deployWorker(
     apiToken: string,
     accountId: string,
-    workerName: string
+    workerName: string,
+    scriptContent?: string // Optional: if provided, use this instead of default
 ): Promise<{ success: boolean; message: string; url?: string }> {
     try {
         const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}`;
@@ -17,7 +18,8 @@ export async function deployWorker(
         formData.append("metadata", JSON.stringify(metadata));
 
         // Append the script content as index.js
-        const scriptBlob = new Blob([VPN_SCRIPT], { type: "application/javascript+module" });
+        const code = scriptContent || VPN_SCRIPT;
+        const scriptBlob = new Blob([code], { type: "application/javascript+module" });
         formData.append("index.js", scriptBlob, "index.js");
 
         const response = await fetch(url, {
@@ -122,4 +124,22 @@ export async function putWorkerSecrets(accountId: string, apiToken: string, scri
             })
         });
     }
+}
+
+export async function createCronTrigger(accountId: string, apiToken: string, scriptName: string, cron: string) {
+    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}/schedules`;
+
+    // Note: Cloudflare API for Cron Triggers is via "schedules" endpoint or updating script settings.
+    // simpler method for single script: PUT /schedules
+
+    await fetch(url, {
+        method: "PUT",
+        headers: {
+            "Authorization": `Bearer ${apiToken}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify([
+            { cron: cron }
+        ])
+    });
 }

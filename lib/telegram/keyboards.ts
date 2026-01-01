@@ -40,7 +40,7 @@ export const MENU_COMMANDS = [
     { text: "📊 Check Status", custom_id: "cmd_allstatus" },
     { text: "📉 Penggunaan Data", custom_id: "cmd_data" },
     { text: "☁️ My CF Account", custom_id: "cmd_mycf" },
-    { text: "👷 Deploy Node", custom_id: "cmd_deploynode" }
+    { text: "🔒 Admin Panel", custom_id: "cmd_admin_panel" } // New Admin Menu
 ];
 
 // Paginated Main Menu Keyboard
@@ -240,6 +240,21 @@ export function getInjectMethodSpecificKeyboard(ip: string, port: string) {
         .text("SNI/TLS", `${base}:sni`);
 
     addNavigationRow(keyboard, "cmd_proxy");
+    return keyboard;
+}
+
+// Admin Panel Keyboard
+export function getAdminPanelKeyboard() {
+    const keyboard = new InlineKeyboard()
+        .text("👷 Deploy Node", "cmd_deploynode") // Reuse existing
+        .text("🤖 Deploy Feeder", "cmd_deployfeeder")
+        .row()
+        .text("➕ Add Wildcard", "cmd_addwc")
+        .text("❌ Del Wildcard", "cmd_delwc")
+        .row()
+        .text("⚙️ Refresh Menu", "cmd_setcommands");
+
+    addNavigationRow(keyboard);
     return keyboard;
 }
 

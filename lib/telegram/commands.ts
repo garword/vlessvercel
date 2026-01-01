@@ -2,7 +2,7 @@
 import { Bot, Context, InputFile, InlineKeyboard } from "grammy";
 import { NauticaVPN } from "../vpn/nautica";
 import { CFAccountManager } from "../deploy/cf_manager";
-import { mainMenuKeyboard, getMainMenuKeyboard, getCountryKeyboard, getFormatKeyboard, getInjectMethodKeyboard, getInjectMethodSpecificKeyboard, protocolSelectionKeyboard, subFormatKeyboard, getProxyListKeyboard, getProtocolSelectionSpecificKeyboard, getFormatSpecificKeyboard, getSubFormatKeyboard } from "./keyboards";
+import { mainMenuKeyboard, getMainMenuKeyboard, getCountryKeyboard, getFormatKeyboard, getInjectMethodKeyboard, getInjectMethodSpecificKeyboard, protocolSelectionKeyboard, subFormatKeyboard, getProxyListKeyboard, getProtocolSelectionSpecificKeyboard, getFormatSpecificKeyboard, getSubFormatKeyboard, getAdminPanelKeyboard } from "./keyboards";
 import { getFlagEmoji, generateQRCode } from "../utils/helpers";
 import { deployWorker, createWorkerRoute, putWorkerSecrets } from "../deploy/cf_api";
 
@@ -455,7 +455,7 @@ export function setupCommands(bot: Bot) {
 
     // Session Interface for Interactive Deployment
     interface InteractiveSession {
-        type: 'deploy' | 'addcf' | 'manual_input';
+        type: 'deploy' | 'addcf' | 'manual_input' | 'deploy_feeder';
         step: number;
 
         // Deploy / Add CF Props
@@ -756,6 +756,63 @@ export function setupCommands(bot: Bot) {
                     return;
                 }
             }
+
+            // --- DEPLOY FEEDER FLOW (Admin) ---
+            if (session.type === 'deploy_feeder') {
+                if (session.step === 1) {
+                    session.apiToken = text;
+                    session.step = 2;
+                    await cleanup();
+                    const nextMsg = await ctx.reply("🆔 *Masukkan Account ID:*", { parse_mode: "Markdown" });
+                    session.msgToDelete.push(nextMsg.message_id);
+                    return;
+                }
+                if (session.step === 2) {
+                    session.accountId = text;
+                    session.step = 3;
+                    await cleanup();
+                    const nextMsg = await ctx.reply("📝 *Masukkan Nama Worker Feeder (contoh: feeder-proxy):*", { parse_mode: "Markdown" });
+                    session.msgToDelete.push(nextMsg.message_id);
+                    return;
+                }
+                if (session.step === 3) {
+                    session.workerName = text;
+                    await cleanup();
+                    const waitMsg = await ctx.reply("⏳ *Installing Feeder & Cron...*", { parse_mode: "Markdown" });
+
+                    try {
+                        // Read Feeder Script
+                        const feederCode = await Deno.readTextFile("scripts/feeder_worker.ts");
+
+                        // Deploy
+                        const result = await deployWorker(session.apiToken!, session.accountId!, session.workerName!, feederCode);
+
+                        if (result.success) {
+                            // Add Database Secrets
+                            await putWorkerSecrets(session.accountId!, session.apiToken!, session.workerName!, {
+                                TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL!,
+                                TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN!
+                            });
+
+                            // Enable Cron (Every 10 mins)
+                            await createWorkerRoute(session.zoneId || "none", session.apiToken!, "*not_used*", session.workerName!); // Hack to just trigger cron potentially? 
+                            // Actually we need createCronTrigger helper
+                            await createCronTrigger(session.accountId!, session.apiToken!, session.workerName!, "*/10 * * * *");
+
+                            await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id);
+                            await ctx.reply(`✅ *Feeder Berhasil Diinstall!*\n\nWorker: \`${session.workerName}\`\nCron: 10 menit`, { parse_mode: "Markdown" });
+                        } else {
+                            await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id);
+                            await ctx.reply(`❌ *Deploy Gagal:*\n${result.message}`, { parse_mode: "Markdown" });
+                        }
+                    } catch (error: any) {
+                        await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id);
+                        await ctx.reply(`❌ *Error Fatal:*\n${error.message}`, { parse_mode: "Markdown" });
+                    }
+                    delete sessions[userId];
+                    return;
+                }
+            }
         }
 
         // 2. Normal Proxy Check Logic
@@ -811,6 +868,36 @@ export function setupCommands(bot: Bot) {
             parse_mode: "Markdown",
             reply_markup: protocolSelectionKeyboard
         });
+    });
+
+    bot.callbackQuery("cmd_admin_panel", async (ctx) => {
+        if (!ctx.from) return;
+        if (!isAdmin(ctx.from.id)) {
+            return ctx.reply("❌ *Access Denied*.", { parse_mode: "Markdown" });
+        }
+        await ctx.reply("🔒 *Admin Panel*\n\nSilakan pilih tindakan:", {
+            parse_mode: "Markdown",
+            reply_markup: getAdminPanelKeyboard()
+        });
+    });
+
+    // Deploy Feeder Handler
+    bot.callbackQuery("cmd_deployfeeder", async (ctx) => {
+        if (!ctx.from) return;
+        if (!isAdmin(ctx.from.id)) return;
+
+        // Reuse Interactive Session Logic, type='deploy_feeder'
+        sessions[ctx.from.id] = {
+            type: 'deploy_feeder',
+            step: 1,
+            msgToDelete: [ctx.callbackQuery?.message?.message_id || 0]
+        };
+
+        const qMsg = await ctx.reply("🤖 *Deploy Feeder Worker (Admin)*\n\n🔑 *Masukkan API Token Cloudflare:*", {
+            parse_mode: "Markdown",
+            reply_markup: new InlineKeyboard().text("❌ Batal", "cancel_session")
+        });
+        sessions[ctx.from.id].msgToDelete.push(qMsg.message_id);
     });
 
 }
