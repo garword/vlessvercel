@@ -230,6 +230,9 @@ export function setupCommands(bot: Bot) {
     bot.command("delvless", async (ctx: Context) => {
         if (!ctx.from || !isAdmin(ctx.from.id)) return;
         const ip = ctx.match as string;
+        if (!ip) return ctx.reply("❌ Format: `/delvless IP_ADDRESS`", { parse_mode: "Markdown" });
+
+        const success = await vpn.removeProxy(ip);
         if (success) {
             await ctx.reply(`✅ Proxy dengan IP \`${ip}\` berhasil dihapus!`, { parse_mode: "Markdown" });
         } else {
