@@ -215,3 +215,29 @@ export function getProtocolSelectionSpecificKeyboard(ip: string, port: string, m
     return keyboard;
 }
 
+// Format Selection Keyboard (Existing/Restored)
+export function getFormatKeyboard(countryCode: string) {
+    const keyboard = new InlineKeyboard()
+        .text("📱 URI / Raw", `gen_vless:${countryCode}:raw`)
+        .text("⚔️ Clash", `gen_vless:${countryCode}:clash`)
+        .row()
+        .text("📦 Sing-box", `gen_vless:${countryCode}:sfa`)
+        .text("🔗 V2Ray Sub", `gen_vless:${countryCode}:v2ray`);
+
+    addNavigationRow(keyboard, `proxy_country:${countryCode}`); // Back to country selection?
+    return keyboard;
+}
+
+// Specific Inject Method Keyboard (Restored)
+export function getInjectMethodSpecificKeyboard(ip: string, port: string) {
+    const base = `inject_spec:${ip}:${port}`;
+    const keyboard = new InlineKeyboard()
+        .text("Tidak", `${base}:none`)
+        .text("Wildcard", `${base}:wildcard`)
+        .row()
+        .text("SNI/TLS", `${base}:sni`);
+
+    addNavigationRow(keyboard, "cmd_proxy");
+    return keyboard;
+}
+
