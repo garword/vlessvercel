@@ -34,7 +34,7 @@ export class NauticaVPN {
 
     // TURSO DB Integration
     private dbClient: any = null;
-    private readonly DB_CACHE_TTL = 300 * 1000; // 5 Minutes Cache Strategies
+    private readonly DB_CACHE_TTL = 60 * 1000; // 1 Minute Cache (Faster updates for user)
 
     private constructor() {
         // Initialize Turso
