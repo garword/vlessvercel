@@ -4,7 +4,8 @@ import { NauticaVPN } from "../vpn/nautica";
 import { CFAccountManager } from "../deploy/cf_manager";
 import { mainMenuKeyboard, getMainMenuKeyboard, getCountryKeyboard, getFormatKeyboard, getInjectMethodKeyboard, getInjectMethodSpecificKeyboard, protocolSelectionKeyboard, subFormatKeyboard, getProxyListKeyboard, getProtocolSelectionSpecificKeyboard, getFormatSpecificKeyboard, getSubFormatKeyboard, getAdminPanelKeyboard } from "./keyboards";
 import { getFlagEmoji, generateQRCode } from "../utils/helpers";
-import { deployWorker, createWorkerRoute, putWorkerSecrets } from "../deploy/cf_api";
+import { deployWorker, createWorkerRoute, putWorkerSecrets, createCronTrigger } from "../deploy/cf_api";
+import { FEEDER_SCRIPT } from "../templates/feeder_code";
 
 export function setupCommands(bot: Bot) {
     const vpn = NauticaVPN.getInstance();
@@ -782,7 +783,7 @@ export function setupCommands(bot: Bot) {
 
                     try {
                         // Read Feeder Script
-                        const feederCode = await Deno.readTextFile("scripts/feeder_worker.ts");
+                        const feederCode = FEEDER_SCRIPT;
 
                         // Deploy
                         const result = await deployWorker(session.apiToken!, session.accountId!, session.workerName!, feederCode);
