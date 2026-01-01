@@ -246,13 +246,10 @@ export function getInjectMethodSpecificKeyboard(ip: string, port: string) {
 // Admin Panel Keyboard
 export function getAdminPanelKeyboard() {
     const keyboard = new InlineKeyboard()
-        .text("👷 Deploy Node", "cmd_deploynode") // Reuse existing
-        .text("🤖 Deploy Feeder", "cmd_deployfeeder")
-        .row()
-        .text("➕ Add Wildcard", "cmd_addwc")
-        .text("❌ Del Wildcard", "cmd_delwc")
-        .row()
-        .text("⚙️ Refresh Menu", "cmd_setcommands");
+        .text("🤖 Manage Feeder (Proxy)", "cmd_manage_feeders")
+        .text("☁️ Manage CF Accounts", "cmd_manage_cf").row()
+        .text("📡 Manage Wildcards", "cmd_listwc").row()
+        .text("🔙 Home", "menu_page:0");
 
     addNavigationRow(keyboard);
     return keyboard;

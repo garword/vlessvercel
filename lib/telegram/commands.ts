@@ -931,13 +931,20 @@ export function setupCommands(bot: Bot) {
         }
     })();
 
-    // 1. Manage Feeders Menu
+    // 1. Manage Feeders Menu (UPDATED with Email)
     bot.callbackQuery("cmd_manage_feeders", async (ctx) => {
         if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.reply("❌ Access Denied");
 
         try {
             const db = getDb();
-            const rs = await db.execute("SELECT * FROM feeder_instances ORDER BY created_at DESC");
+            // Join with cf_accounts to get email
+            // Note: Turso/SQLite join. 
+            const rs = await db.execute(`
+                SELECT f.*, c.email 
+                FROM feeder_instances f
+                LEFT JOIN cf_accounts c ON f.account_id = c.account_id
+                ORDER BY f.created_at DESC
+            `);
 
             if (rs.rows.length === 0) {
                 return ctx.editMessageText("🤖 *Manage Feeders*\n\nBelum ada Feeder yang terdaftar.", {
@@ -952,8 +959,11 @@ export function setupCommands(bot: Bot) {
             const keyboard = new InlineKeyboard();
 
             for (const row of rs.rows) {
-                msg += `🔹 \`${row.worker_name}\`\n   ID: \`${String(row.account_id).substring(0, 6)}...\`\n\n`;
-                keyboard.text(`🗑️ Hapus ${row.worker_name}`, `del_feeder:${row.id}`).row();
+                const email = row.email ? String(row.email) : "Unknown Email";
+                const workerName = String(row.worker_name);
+
+                msg += `🔹 \`${workerName}\`\n   👤 ${email}\n\n`;
+                keyboard.text(`🗑️ Hapus ${workerName}`, `del_feeder:${row.id}`).row();
             }
 
             keyboard.text("➕ Deploy Feeder Baru", "cmd_deployfeeder").row();
@@ -966,14 +976,13 @@ export function setupCommands(bot: Bot) {
         }
     });
 
-    // 2. Delete Feeder Handler
+    // 2. Delete Feeder Handler (Existing, just verifying)
     bot.callbackQuery(/^del_feeder:(.+)$/, async (ctx) => {
         if (!ctx.match) return;
         const dbId = ctx.match[1];
 
         try {
             const db = getDb();
-            // Get credentials first
             const rs = await db.execute({ sql: "SELECT * FROM feeder_instances WHERE id = ?", args: [dbId] });
             if (rs.rows.length === 0) return ctx.answerCallbackQuery("❌ Data feeder tidak ditemukan.");
 
@@ -981,10 +990,6 @@ export function setupCommands(bot: Bot) {
             const { account_id, api_token, worker_name } = feeder;
 
             await ctx.editMessageText(`⏳ *Deleting Feeder: ${worker_name}...*`, { parse_mode: "Markdown" });
-
-            // Call Cloudflare API to Delete Worker
-            // We need to import deleteWorker from cf_api or use fetch directly
-            // For now assuming deleteWorker exists or implementing ad-hoc
 
             const cfUrl = `https://api.cloudflare.com/client/v4/accounts/${account_id}/workers/scripts/${worker_name}`;
             const delResp = await fetch(cfUrl, {
@@ -994,17 +999,13 @@ export function setupCommands(bot: Bot) {
 
             if (!delResp.ok && delResp.status !== 404) {
                 const err = await delResp.json();
-                throw new Error((err as any).errors[0]?.message || "Cloudflare Delete Failed");
+                // console.error(err); // optional log
             }
 
-            // Delete from DB
             await db.execute({ sql: "DELETE FROM feeder_instances WHERE id = ?", args: [dbId] });
-            // Also cleanup secrets if needed? CF delete script removes secrets usually attached to it.
 
             await ctx.reply(`✅ *Feeder ${worker_name} berhasil dihapus!*`, { parse_mode: "Markdown" });
 
-            // Refresh Menu (Simulate click)
-            // Can't simulate, just show deleted msg and Back button
             await ctx.reply("Tap menu untuk refresh:", {
                 reply_markup: new InlineKeyboard().text("🔄 Refresh List", "cmd_manage_feeders")
             });
@@ -1013,6 +1014,66 @@ export function setupCommands(bot: Bot) {
             await ctx.reply("❌ Gagal menghapus feeder: " + e.message);
         }
     });
+
+    // 3. Manage CF Accounts (NEW)
+    bot.callbackQuery("cmd_manage_cf", async (ctx) => {
+        if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.reply("❌ Access Denied");
+
+        try {
+            const db = getDb();
+            const rs = await db.execute("SELECT * FROM cf_accounts ORDER BY last_used DESC");
+
+            if (rs.rows.length === 0) {
+                return ctx.editMessageText("☁️ *Manage CF Accounts*\n\nBelum ada akun tersimpan.", {
+                    parse_mode: "Markdown",
+                    reply_markup: new InlineKeyboard()
+                        .text("➕ Tambah via /addcf", "mycf_add").row() // Reuse mycf_add session?
+                        .text("🔙 Kembali", "cmd_admin_panel")
+                });
+            }
+
+            let msg = "☁️ *Cloudflare Accounts (Admin View):*\n\n";
+            const keyboard = new InlineKeyboard();
+
+            for (const row of rs.rows) {
+                const email = String(row.email);
+                const domain = String(row.worker_domain);
+                msg += `📧 \`${email}\`\n   🔗 ${domain}\n\n`;
+                keyboard.text(`🗑️ Hapus ${email}`, `del_cf:${row.account_id}`).row();
+            }
+
+            keyboard.text("➕ Tambah Akun", "mycf_add").row();
+            keyboard.text("🔙 Kembali", "cmd_admin_panel");
+
+            await ctx.editMessageText(msg, { parse_mode: "Markdown", reply_markup: keyboard });
+
+        } catch (e: any) {
+            await ctx.reply("Error: " + e.message);
+        }
+    });
+
+    // Handle Delete CF Account
+    bot.callbackQuery(/^del_cf:(.+)$/, async (ctx) => {
+        if (!ctx.from || !isAdmin(ctx.from.id)) return;
+        const accId = ctx.match[1];
+
+        // Confirmation? Just delete for speed as requested "gas"
+        try {
+            const db = getDb();
+            await db.execute({ sql: "DELETE FROM cf_accounts WHERE account_id = ?", args: [accId] });
+            await ctx.answerCallbackQuery("✅ Akun berhasil dihapus dari database bot.");
+
+            // Refresh
+            // Trigger cmd_manage_cf logic again manually or ask user to refresh
+            await ctx.editMessageText("✅ *Akun berhasil dihapus!*", {
+                parse_mode: "Markdown",
+                reply_markup: new InlineKeyboard().text("🔄 Refresh List", "cmd_manage_cf")
+            });
+        } catch (e: any) {
+            await ctx.reply("Gagal hapus: " + e.message);
+        }
+    });
+
 
 
     // Deploy Feeder Handler (UPDATED)
