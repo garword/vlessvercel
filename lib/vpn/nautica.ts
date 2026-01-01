@@ -68,11 +68,14 @@ export class NauticaVPN {
     private async fetchProxies(): Promise<void> {
         try {
             console.log("Fetching proxies from:", this.PRX_BANK_URL);
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 Second Timeout
 
-            const res = await fetch(this.PRX_BANK_URL, { signal: controller.signal });
-            clearTimeout(timeoutId);
+            // Hard Timeout using Promise.race (5s) to guarantee fallback
+            const fetchPromise = fetch(this.PRX_BANK_URL);
+            const timeoutPromise = new Promise<Response>((_, reject) =>
+                setTimeout(() => reject(new Error("Fetch Timeout")), 5000)
+            );
+
+            const res = await Promise.race([fetchPromise, timeoutPromise]);
 
             if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
 
