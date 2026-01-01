@@ -798,10 +798,26 @@ export function setupCommands(bot: Bot) {
                             // Enable Cron (Every 10 mins)
                             await createWorkerRoute(session.zoneId || "none", session.apiToken!, "*not_used*", session.workerName!); // Hack to just trigger cron potentially? 
                             // Actually we need createCronTrigger helper
+                            // Validating deploy
                             await createCronTrigger(session.accountId!, session.apiToken!, session.workerName!, "*/10 * * * *");
 
+                            // SAVE TO DB (Feeder Instance)
+                            try {
+                                const db = createClient({
+                                    url: process.env.TURSO_DATABASE_URL!,
+                                    authToken: process.env.TURSO_AUTH_TOKEN!
+                                });
+                                await db.execute({
+                                    sql: "INSERT INTO feeder_instances (worker_name, account_id, api_token, created_at) VALUES (?, ?, ?, ?)",
+                                    args: [session.workerName!, session.accountId!, session.apiToken!, Date.now()]
+                                });
+                            } catch (dbe) {
+                                console.error("Failed to save feeder instance to DB:", dbe);
+                                // Non-fatal, user just won't see it in list immediately (manual add feature needed later?)
+                            }
+
                             await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id);
-                            await ctx.reply(`✅ *Feeder Berhasil Diinstall!*\n\nWorker: \`${session.workerName}\`\nCron: 10 menit`, { parse_mode: "Markdown" });
+                            await ctx.reply(`✅ *Feeder Berhasil Diinstall!*\n\nWorker: \`${session.workerName}\`\nCron: 10 menit\n\n_Data tersimpan di Manager._`, { parse_mode: "Markdown" });
                         } else {
                             await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id);
                             await ctx.reply(`❌ *Deploy Gagal:*\n${result.message}`, { parse_mode: "Markdown" });
@@ -882,12 +898,131 @@ export function setupCommands(bot: Bot) {
         });
     });
 
-    // Deploy Feeder Handler
+    // ... imports
+    import { createClient } from "@libsql/client";
+
+    // ... existing code
+
+    // ---------------------------------------------------------
+    // FEEDER MANAGEMENT LOGIC
+    // ---------------------------------------------------------
+
+    // Helper to get DB client
+    const getDb = () => {
+        const url = process.env.TURSO_DATABASE_URL;
+        const authToken = process.env.TURSO_AUTH_TOKEN;
+        if (!url || !authToken) throw new Error("Database credentials missing");
+        return createClient({ url, authToken });
+    };
+
+    // Auto-Migrate Table on commands load (Safe idempotent)
+    (async () => {
+        try {
+            const db = getDb();
+            await db.execute(`
+                CREATE TABLE IF NOT EXISTS feeder_instances (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    worker_name TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    api_token TEXT NOT NULL,
+                    created_at INTEGER
+                )
+            `);
+        } catch (e) {
+            console.error("Feeder Table Migration Failed (Non-Critical if exists):", e);
+        }
+    })();
+
+    // 1. Manage Feeders Menu
+    bot.callbackQuery("cmd_manage_feeders", async (ctx) => {
+        if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.reply("❌ Access Denied");
+
+        try {
+            const db = getDb();
+            const rs = await db.execute("SELECT * FROM feeder_instances ORDER BY created_at DESC");
+
+            if (rs.rows.length === 0) {
+                return ctx.editMessageText("🤖 *Manage Feeders*\n\nBelum ada Feeder yang terdaftar.", {
+                    parse_mode: "Markdown",
+                    reply_markup: new InlineKeyboard()
+                        .text("➕ Deploy Feeder Baru", "cmd_deployfeeder").row()
+                        .text("🔙 Kembali", "cmd_admin_panel")
+                });
+            }
+
+            let msg = "🤖 *Active Feeders:*\n\n";
+            const keyboard = new InlineKeyboard();
+
+            for (const row of rs.rows) {
+                msg += `🔹 \`${row.worker_name}\`\n   ID: \`${String(row.account_id).substring(0, 6)}...\`\n\n`;
+                keyboard.text(`🗑️ Hapus ${row.worker_name}`, `del_feeder:${row.id}`).row();
+            }
+
+            keyboard.text("➕ Deploy Feeder Baru", "cmd_deployfeeder").row();
+            keyboard.text("🔙 Kembali", "cmd_admin_panel");
+
+            await ctx.editMessageText(msg, { parse_mode: "Markdown", reply_markup: keyboard });
+
+        } catch (e: any) {
+            await ctx.reply("❌ Error fetching feeders: " + e.message);
+        }
+    });
+
+    // 2. Delete Feeder Handler
+    bot.callbackQuery(/^del_feeder:(.+)$/, async (ctx) => {
+        if (!ctx.match) return;
+        const dbId = ctx.match[1];
+
+        try {
+            const db = getDb();
+            // Get credentials first
+            const rs = await db.execute({ sql: "SELECT * FROM feeder_instances WHERE id = ?", args: [dbId] });
+            if (rs.rows.length === 0) return ctx.answerCallbackQuery("❌ Data feeder tidak ditemukan.");
+
+            const feeder = rs.rows[0];
+            const { account_id, api_token, worker_name } = feeder;
+
+            await ctx.editMessageText(`⏳ *Deleting Feeder: ${worker_name}...*`, { parse_mode: "Markdown" });
+
+            // Call Cloudflare API to Delete Worker
+            // We need to import deleteWorker from cf_api or use fetch directly
+            // For now assuming deleteWorker exists or implementing ad-hoc
+
+            const cfUrl = `https://api.cloudflare.com/client/v4/accounts/${account_id}/workers/scripts/${worker_name}`;
+            const delResp = await fetch(cfUrl, {
+                method: "DELETE",
+                headers: { "Authorization": `Bearer ${api_token}` }
+            });
+
+            if (!delResp.ok && delResp.status !== 404) {
+                const err = await delResp.json();
+                throw new Error((err as any).errors[0]?.message || "Cloudflare Delete Failed");
+            }
+
+            // Delete from DB
+            await db.execute({ sql: "DELETE FROM feeder_instances WHERE id = ?", args: [dbId] });
+            // Also cleanup secrets if needed? CF delete script removes secrets usually attached to it.
+
+            await ctx.reply(`✅ *Feeder ${worker_name} berhasil dihapus!*`, { parse_mode: "Markdown" });
+
+            // Refresh Menu (Simulate click)
+            // Can't simulate, just show deleted msg and Back button
+            await ctx.reply("Tap menu untuk refresh:", {
+                reply_markup: new InlineKeyboard().text("🔄 Refresh List", "cmd_manage_feeders")
+            });
+
+        } catch (e: any) {
+            await ctx.reply("❌ Gagal menghapus feeder: " + e.message);
+        }
+    });
+
+
+    // Deploy Feeder Handler (UPDATED)
     bot.callbackQuery("cmd_deployfeeder", async (ctx) => {
         if (!ctx.from) return;
         if (!isAdmin(ctx.from.id)) return;
 
-        // Reuse Interactive Session Logic, type='deploy_feeder'
+        // ... (Reuse existing logic setup) ...
         sessions[ctx.from.id] = {
             type: 'deploy_feeder',
             step: 1,

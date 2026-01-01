@@ -1,9 +1,14 @@
+import { connect } from 'cloudflare:sockets';
+
 export const FEEDER_SCRIPT = `
 /**
- * Cloudflare Worker: Feeder & Rotator (OPTIMIZED)
- * Description: Fetches only minimal proxies (ID/SG) to avoid Subrequest Limits.
- * Trigger: Cron Trigger / Manual HTTP
+ * Cloudflare Worker: Feeder & Rotator (Smart Logic)
+ * Features:
+ * - Smart Retention: Keeps alive proxies (Ping Check).
+ * - Health Check: Verifies new candidates before inserting.
+ * - Optimized: Low DB load, High Quality List.
  */
+import { connect } from 'cloudflare:sockets';
 
 export default {
     async fetch(request, env, ctx) {
@@ -22,7 +27,7 @@ export default {
         if (url.pathname === "/") {
             try {
                 await this.runLogic(env, log, error);
-                return new Response(\`✅ Feeder Execution Finished (Optimized).\\n\\nLogs:\\n\${logs.join("\\n")}\`, { status: 200 });
+                return new Response(\`✅ Feeder Finished (Smart Mode).\\n\\nLogs:\\n\${logs.join("\\n")}\`, { status: 200 });
             } catch (e) {
                  return new Response(\`❌ Feeder Failed.\\n\\nLogs:\\n\${logs.join("\\n")}\\n\\nFatal Error: \${e.message}\\nStack: \${e.stack}\`, { status: 500 });
             }
@@ -36,11 +41,25 @@ export default {
 
     // Shared Logic
     async runLogic(env, log, error) {
-        log("⏰ Starting Optimized Proxy Update...");
+        log("⏰ Starting Smart Proxy Update...");
 
         // Config
         const DB_URL = env.TURSO_DATABASE_URL;
         const DB_TOKEN = env.TURSO_AUTH_TOKEN;
+
+        // --- HEALTH CHECK HELPER ---
+        async function checkProxy(ip, port) {
+            try {
+                const socket = connect({ hostname: ip, port: port });
+                const writer = socket.writable.getWriter();
+                await writer.ready;
+                await writer.close();
+                socket.close();
+                return true; // Connected
+            } catch (e) {
+                return false; // Connection Refused/Timeout
+            }
+        }
         
         // Helper to execute SQL via Turso HTTP API
         async function executeSql(sql, args = []) {
@@ -61,10 +80,7 @@ export default {
 
             const resp = await fetch(url, {
                 method: "POST",
-                headers: {
-                    "Authorization": \`Bearer \${DB_TOKEN}\`,
-                    "Content-Type": "application/json"
-                },
+                headers: { "Authorization": \`Bearer \${DB_TOKEN}\`, "Content-Type": "application/json" },
                 body: JSON.stringify(body)
             });
 
@@ -76,94 +92,103 @@ export default {
         }
 
         try {
-            // 1. Fetch Proxies from GitHub (Raw)
+            // 1. Fetch Fresh List
             const proxyUrl = env.GITHUB_PROXY_URL || "https://raw.githubusercontent.com/FoolVPN-ID/Nautica/main/proxyList.txt";
-            log(\`Fetching from: \${proxyUrl}\`);
+            log(\`Fetching Source: \${proxyUrl}\`);
             
             const resp = await fetch(proxyUrl);
-            if (!resp.ok) throw new Error(\`Failed to fetch from GitHub: \${resp.status}\`);
-
+            if (!resp.ok) throw new Error(\`Failed to fetch GitHub: \${resp.status}\`);
             const text = await resp.text();
-            const lines = text.split("\\n").filter(l => l.trim().length > 0);
-
-            // 2. PARSE & FILTER IN MEMORY (Avoid DB Overload)
+            
+            // Parse Memory
             const allProxies = [];
+            const lines = text.split("\\n");
             for (const line of lines) {
                 const parts = line.split(",");
                 if (parts.length >= 4) {
-                    const [ip, portStr, cc, org] = parts;
-                    allProxies.push({
-                        ip: ip.trim(),
-                        port: parseInt(portStr.trim()),
-                        country: cc.trim().toUpperCase(),
-                        org: org.trim()
-                    });
+                    const [ip, p, cc, org] = parts;
+                    allProxies.push({ ip: ip.trim(), port: parseInt(p.trim()), country: cc.trim().toUpperCase(), org: org.trim() });
                 }
             }
-            log(\`📥 Total parsed: \${allProxies.length}\`);
+            log(\`📥 Source Count: \${allProxies.length}\`);
 
-            // STRATEGY: Get random 5 ID and 5 SG only
-            const idProxies = allProxies.filter(p => p.country === 'ID');
-            const sgProxies = allProxies.filter(p => p.country === 'SG');
-            
-            const selectedProxies = [];
-            
-            // Random Shuffle & Pick 5
-            const pickRandom = (arr, count) => arr.sort(() => 0.5 - Math.random()).slice(0, count);
-            
-            selectedProxies.push(...pickRandom(idProxies, 5));
-            selectedProxies.push(...pickRandom(sgProxies, 5));
-            
-            log(\`🎯 Selected Candidates: \${selectedProxies.length} (ID & SG)\`);
-            
-            if (selectedProxies.length === 0) {
-                 log("⚠️ No ID/SG proxies found in source! Aborting update.");
-                 return;
-            }
+            // 2. Logic: Maintain Elite Slots (ID_1..3, SG_1..3)
+            const slots = ["ID_1", "ID_2", "ID_3", "SG_1", "SG_2", "SG_3"];
 
-            // 3. Batch Insert ONLY Selected Proxies (1 Fetch Call)
-            const timestamp = new Date().toISOString();
-            const stmts = [];
+            // Helper to run query via HTTP
+            const run = async (sql, args=[]) => {
+                 const r = await executeSql(sql, args);
+                 return r.results[0];
+            };
 
-            for (const p of selectedProxies) {
-                if (isNaN(p.port)) continue;
-                stmts.push({
-                    type: "execute",
-                    stmt: {
-                        sql: \`INSERT INTO proxy_pool (ip, port, country, org, status, last_updated)
+            for (const slotId of slots) {
+                const countryTarget = slotId.startsWith("ID") ? "ID" : "SG";
+                
+                // Get Current Slot
+                const rs = await run("SELECT * FROM active_nodes WHERE slot_id = ?", [slotId]);
+                let currentIp = "0.0.0.0";
+                
+                if (rs.response.result.rows.length > 0) {
+                     const cols = rs.response.result.cols;
+                     currentIp = rs.response.result.rows[0][cols.findIndex(c => c.name === "proxy_ip")].value;
+                     const currentPort = rs.response.result.rows[0][cols.findIndex(c => c.name === "proxy_port")].value;
+                     
+                     // CHECK 1: Is it still alive?
+                     if (currentIp !== "0.0.0.0") {
+                         log(\`🔍 Checking \${slotId} (\${currentIp})...\`);
+                         const isAlive = await checkProxy(currentIp, Number(currentPort)); 
+                         
+                         if (isAlive) {
+                             log(\`✅ \${slotId} is ALIVE. Keeping it.\`);
+                             // Update timestamp only
+                             await run("UPDATE proxy_pool SET last_updated = ? WHERE ip = ?", [new Date().toISOString(), currentIp]);
+                             continue; // SKIP REPLACEMENT
+                         } else {
+                             log(\`❌ \${slotId} is DEAD/TIMEOUT. Replacing...\`);
+                         }
+                     }
+                }
+
+                // NEED REPLACEMENT
+                // Filter fresh list by country
+                const candidates = allProxies.filter(p => p.country === countryTarget);
+                let foundNew = false;
+                
+                // Try up to 5 times to find a working one
+                for (let i = 0; i < 10; i++) {
+                    const candidate = candidates[Math.floor(Math.random() * candidates.length)];
+                    if (!candidate) break;
+
+                    // Avoid duplicate if possible (simple check against currentIp not needed as we know current is dead/empty)
+                    
+                    // CHECK 2: Is candidate alive?
+                    log(\`TESTING Candidate: \${candidate.ip}...\`);
+                    const isGood = await checkProxy(candidate.ip, candidate.port);
+                    
+                    if (isGood) {
+                         foundNew = true;
+                         // 1. Insert/Update into Pool
+                         await run(\`INSERT INTO proxy_pool (ip, port, country, org, status, last_updated)
                                VALUES (?, ?, ?, ?, 'active', ?)
                                ON CONFLICT(ip) DO UPDATE SET
                                port=excluded.port, country=excluded.country, org=excluded.org, status='active', last_updated=excluded.last_updated\`,
-                        args: [
-                             { type: "text", value: p.ip },
-                             { type: "float", value: p.port },
-                             { type: "text", value: p.country },
-                             { type: "text", value: p.org },
-                             { type: "text", value: timestamp }
-                        ]
+                               [candidate.ip, candidate.port, candidate.country, candidate.org, new Date().toISOString()]);
+                         
+                         // 2. Assign to Slot
+                         await run(\`UPDATE active_nodes SET proxy_ip = ?, proxy_port = ?, display_name = ? WHERE slot_id = ?\`,
+                               [candidate.ip, candidate.port, candidate.org, slotId]);
+                         
+                         log(\`♻️ Swapped \${slotId} -> \${candidate.org} (\${candidate.ip})\`);
+                         break; // Done with this slot
                     }
-                });
+                }
+                
+                if (!foundNew) {
+                    log(\`⚠️ Failed to find valid replacement for \${slotId} after retries.\`);
+                }
             }
 
-            // Execute Batch (One HUGE request instead of 50)
-            const body = { requests: stmts, close: true };
-            const batchUrl = \`\${DB_URL.replace("libsql://", "https://")}/v2/pipeline\`;
-            
-            const batchResp = await fetch(batchUrl, {
-                method: "POST",
-                headers: { "Authorization": \`Bearer \${DB_TOKEN}\`, "Content-Type": "application/json" },
-                body: JSON.stringify(body)
-            });
-            
-            if (!batchResp.ok) {
-                 const txt = await batchResp.text();
-                 throw new Error(\`Batch Insert Failed: \${txt}\`);
-            }
-
-             log("✅ Proxy Pool Updated (Lightweight).");
-
-             // 4. Maintain Elite Slots (Reuse connection logic)
-             await maintainSlotsHTTP(DB_URL, DB_TOKEN, log);
+            log("✅ Smart Update Complete.");
 
         } catch (e) {
             error("Feeder Failed:", e.message);
@@ -171,74 +196,4 @@ export default {
         }
     }
 };
-
-async function maintainSlotsHTTP(dbUrl, dbToken, log) {
-    const slots = ["ID_1", "ID_2", "ID_3", "SG_1", "SG_2", "SG_3"];
-    const endpoint = \`\${dbUrl.replace("libsql://", "https://")}/v2/pipeline\`;
-
-    // Run helper
-    const run = async (sql, args=[]) => {
-         const processedArgs = args.map(a => (typeof a==='number'?{type:"float",value:a}:{type:"text",value:String(a)}));
-         const resp = await fetch(endpoint, {
-             method: "POST",
-             headers: { "Authorization": \`Bearer \${dbToken}\`, "Content-Type": "application/json" },
-             body: JSON.stringify({ requests: [{ type: "execute", stmt: { sql, args: processedArgs } }], close: true })
-         });
-         return (await resp.json()).results[0]; 
-    };
-
-    for (const slotId of slots) {
-        const countryTarget = slotId.startsWith("ID") ? "ID" : "SG";
-
-        try {
-            // Get current slot
-            const rs = await run("SELECT * FROM active_nodes WHERE slot_id = ?", [slotId]);
-            
-            let currentIp = "0.0.0.0";
-            if (rs.response.result.rows.length > 0) {
-                 const ipIdx = rs.response.result.cols.findIndex(c => c.name === "proxy_ip");
-                 currentIp = rs.response.result.rows[0][ipIdx].value;
-            }
-
-            let needReplace = (currentIp === "0.0.0.0");
-            
-            // Check status of current assignment if not empty
-            if (!needReplace) {
-                 const poolCheck = await run("SELECT status FROM proxy_pool WHERE ip = ?", [currentIp]);
-                 if (poolCheck.response.result.rows.length === 0) {
-                     needReplace = true; // Not in pool (maybe purged)
-                 } else {
-                     const statusVal = poolCheck.response.result.rows[0][0].value;
-                     if (statusVal === 'dead') needReplace = true;
-                 }
-            }
-
-            if (needReplace) {
-                 // REPLACEMENT STRATEGY: 
-                 // We recently inserted fresh ID/SG proxies. Just pick one active one randomly.
-                 const rep = await run(\`SELECT * FROM proxy_pool WHERE country = ? AND status = 'active' ORDER BY RANDOM() LIMIT 1\`, [countryTarget]);
-                 
-                 if (rep.response.result.rows.length > 0) {
-                     const rCols = rep.response.result.cols;
-                     const rRow = rep.response.result.rows[0];
-                     
-                     const getVal = (name) => rRow[rCols.findIndex(c => c.name === name)].value;
-                     
-                     const newIp = getVal("ip");
-                     const newPort = getVal("port");
-                     const newOrg = getVal("org");
-
-                     await run(\`UPDATE active_nodes SET proxy_ip = ?, proxy_port = ?, display_name = ? WHERE slot_id = ?\`, 
-                         [newIp, Number(newPort), newOrg, slotId]);
-                     
-                     log(\`♻️ Swapped \${slotId} -> \${newOrg} (\${newIp})\`);
-                 } else {
-                     log(\`⚠️ No replacement found for \${slotId}\`);
-                 }
-            }
-        } catch(e) {
-            log(\`❌ Error processing slot \${slotId}: \${e.message}\`);
-        }
-    }
-}
-`;
+\`;\n
