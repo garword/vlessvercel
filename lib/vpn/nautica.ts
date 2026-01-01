@@ -1,5 +1,6 @@
 import { CONSTANTS } from "../utils/constants";
 import { getFlagEmoji, uuidv4, shuffleArray } from "../utils/helpers";
+import { createClient } from "@libsql/client";
 
 export interface ProxyItem {
     ip: string;
@@ -43,7 +44,6 @@ export class NauticaVPN {
         if (url && authToken) {
             try {
                 // Dynamically import or require to avoid build issues if package missing in some envs
-                const { createClient } = require("@libsql/client");
                 this.dbClient = createClient({ url, authToken });
                 console.log("✅ NauticaVPN connected to Turso DB.");
             } catch (e) {
