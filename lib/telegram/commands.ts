@@ -351,7 +351,8 @@ export function setupCommands(bot: Bot) {
         const caption = `*Konfigurasi ${protocol.toUpperCase()} Berhasil*\n` +
             `*Server:* ${name}\n` +
             `*Domain Worker:* \`${workerDomain}\`\n` +
-            `*Metode:* ${method.toUpperCase()} ${bugHost ? `(${bugHost})` : ""}\n\n` +
+            `*Metode:* ${method.toUpperCase()} ${bugHost ? `(${bugHost})` : ""}\n` +
+            `*Link:* \`https://${workerDomain}/sub/${protocol}/?method=${method}&bug=${bugHost || workerDomain}\`\n\n` +
             `\`${config}\`\n\n` +
             `_Scan QR di atas untuk connect (v2rayNG/Nekobox)._`;
 
