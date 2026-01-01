@@ -1,4 +1,4 @@
-export const FEEDER_SCRIPT = \`
+export const FEEDER_SCRIPT = `
 /**
  * Cloudflare Worker: Feeder & Rotator (Zero-Dependency JS Version)
  * Description: Fetches proxies from GitHub, updates Turso DB via HTTP API.
@@ -224,4 +224,4 @@ async function maintainSlotsHTTP(dbUrl, dbToken) {
         }
     }
 }
-\`;\n
+`;
