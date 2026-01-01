@@ -616,6 +616,54 @@ export function setupCommands(bot: Bot) {
         sessions[ctx.from.id].msgToDelete.push(qMsg.message_id);
     });
 
+    // Handle MyCF Deletion - Show List to Delete
+    bot.callbackQuery("mycf_del", async (ctx) => {
+        if (!ctx.from) return;
+        const userId = ctx.from.id.toString();
+
+        const accounts = await cfManager.getAccounts(userId);
+
+        if (accounts.length === 0) {
+            return ctx.reply("❌ Tidak ada akun untuk dihapus.", { parse_mode: "Markdown" });
+        }
+
+        let msg = "🗑️ *Pilih Akun yang akan dihapus:*";
+        const keyboard = new InlineKeyboard();
+
+        for (const acc of accounts) {
+            keyboard.text(`❌ Hapus ${acc.email}`, `del_mycf:${acc.id}`).row();
+        }
+        keyboard.text("🔙 Kembali", "cmd_mycf"); // Back to MyCF menu
+
+        await ctx.editMessageText(msg, { parse_mode: "Markdown", reply_markup: keyboard });
+    });
+
+    // Handle Actual Personal CF Deletion
+    bot.callbackQuery(/^del_mycf:(.+)$/, async (ctx) => {
+        if (!ctx.match || !ctx.from) return;
+        const dbId = parseInt(ctx.match[1]);
+
+        try {
+            await cfManager.removeAccount(dbId, ctx.from.id.toString());
+            await ctx.answerCallbackQuery("✅ Akun berhasil dihapus.");
+
+            // Refresh My CF Menu
+            // Trigger the handleMyCF logic again, but context is callback.
+            // We can just call the handler or manually send the new menu.
+            // Let's manually trigger the menu since handleMyCF is designed to be reusable but passing ctx might be cleaner if we just call the command handler?
+            // Actually reusing handleMyCF(ctx) should work if ctx is compatible.
+            // Let's try simple text editing first to be safe.
+
+            await ctx.editMessageText("✅ *Akun berhasil dihapus!*", {
+                parse_mode: "Markdown",
+                reply_markup: new InlineKeyboard().text("🔄 Refresh List", "cmd_mycf")
+            });
+
+        } catch (e: any) {
+            await ctx.reply("❌ Gagal menghapus: " + e.message);
+        }
+    });
+
     // Handle Manual Input Start
     bot.callbackQuery("cmd_manual_input", async (ctx) => {
         if (!ctx.from) return;

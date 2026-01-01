@@ -72,9 +72,12 @@ export class CFAccountManager {
         } catch (e) { return []; }
     }
 
-    async deleteAccount(id: number, ownerId: string | null) {
+    async removeAccount(id: number, ownerId: string | null) {
         if (!this.ready) return;
+
         // Security: Ensure owner matches (or is admin managing specifically system accounts)
+        // Note: ownerId is passed as string from Telegram Context.  
+
         const sql = ownerId
             ? "DELETE FROM cf_accounts WHERE id = ? AND owner_id = ?"
             : "DELETE FROM cf_accounts WHERE id = ? AND owner_id IS NULL";
