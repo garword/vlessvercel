@@ -161,4 +161,4 @@ async function maintainSlots(client: any) {
         }
     }
 }
-`; \n
+`;
