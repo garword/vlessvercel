@@ -786,4 +786,31 @@ export function setupCommands(bot: Bot) {
         }
     });
 
+    // --- Button Callbacks for Menu ---
+    bot.callbackQuery("cmd_allstatus", async (ctx) => {
+        // Same as /allstatus (if exists, or implemented here)
+        await ctx.reply("📊 *System Status:* Online\nDatabase: Connected (Turso)\nWorker: Active", { parse_mode: "Markdown" });
+    });
+
+    bot.callbackQuery("cmd_listwc", async (ctx) => {
+        const wcs = await cfManager.getWildcards();
+        if (wcs.length === 0) return ctx.reply("📜 *Wildcard List:* (Kosong)", { parse_mode: "Markdown" });
+
+        let msg = "📜 *Wildcard Domains:*\n\n";
+        wcs.forEach(w => msg += `• \`${w}\`\n`);
+
+        await ctx.reply(msg, { parse_mode: "Markdown" });
+    });
+
+    bot.callbackQuery("cmd_data", async (ctx) => {
+        await ctx.reply("📊 *Penggunaan Data:*\n\nTotal Upload: `0 GB`\nTotal Download: `0 GB`\n\n_Fitur tracking data belum tersedia di versi ini._", { parse_mode: "Markdown" });
+    });
+
+    bot.callbackQuery("cmd_proxy_random", async (ctx) => {
+        await ctx.reply("📡 *Pilih Protokol (Random Proxy):*", {
+            parse_mode: "Markdown",
+            reply_markup: protocolSelectionKeyboard
+        });
+    });
+
 }

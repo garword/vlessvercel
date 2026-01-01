@@ -33,10 +33,12 @@ export function addPaginationRow(keyboard: InlineKeyboard, page: number, totalPa
 export const MENU_COMMANDS = [
     { text: "🚀 Buat Akun", custom_id: "cmd_proxy" },
     { text: "✏️ Input Manual", custom_id: "cmd_manual_input" },
-    { text: "🌏 List Proxy", custom_id: "list_vless:0" }, // Changed to callback for pagination
+    { text: "� Random Proxy", custom_id: "cmd_proxy_random" }, // Added
+    { text: "�🌏 List Proxy", custom_id: "list_vless:0" }, // Changed to callback for pagination
     { text: "🔗 Get Sub Link", custom_id: "cmd_sub" },
     { text: "📜 List Wildcard", custom_id: "cmd_listwc" }, // Might need pagination later
     { text: "📊 Check Status", custom_id: "cmd_allstatus" },
+    { text: "📉 Penggunaan Data", custom_id: "cmd_data" },
     { text: "☁️ My CF Account", custom_id: "cmd_mycf" },
     { text: "👷 Deploy Node", custom_id: "cmd_deploynode" }
 ];
