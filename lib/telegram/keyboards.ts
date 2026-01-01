@@ -1,26 +1,24 @@
 import { InlineKeyboard } from "grammy";
 import { COUNTRIES } from "../utils/constants";
-import { ITEMS_PER_PAGE } from "../utils/helpers";
+import { ITEMS_PER_PAGE, getFlagEmoji } from "../utils/helpers";
 import { ProxyItem } from "../vpn/nautica";
 
 // Main Menu
 // Main Menu Commands Definition
 export const MENU_COMMANDS = [
     // User Commands
-    { text: "🚀 Generate Proxy", custom_id: "cmd_proxy" },
-    { text: "🎲 Random Proxy", custom_id: "cmd_proxyrandom" },
-    { text: "🌏 List VLESS", custom_id: "cmd_listvless" },
+    { text: "🚀 Buat Akun", custom_id: "cmd_proxy" },
+    { text: "✏️ Input Manual", custom_id: "cmd_manual_input" }, // New
+    { text: "🌏 List Proxy", custom_id: "cmd_listvless" },
     { text: "🔗 Get Sub Link", custom_id: "cmd_sub" },
     { text: "📜 List Wildcard", custom_id: "cmd_listwc" },
-    { text: "➕ Add Wildcard", custom_id: "cmd_addwc" }, // Requires input usually, but we can prompt
     { text: "📊 Check Status", custom_id: "cmd_allstatus" },
-    { text: "📉 Data Usage", custom_id: "cmd_data" },
+    // Admin / User Personal CF
+    { text: "☁️ My CF Account", custom_id: "cmd_mycf" },
     // Admin Commands (Will be filtered in logic if needed, or shown all)
-    { text: "👷 Deploy Node", custom_id: "cmd_deploynode" },
-    { text: "➕ Add VLESS", custom_id: "cmd_addvless" },
-    { text: "🗑️ Del VLESS", custom_id: "cmd_delvless" },
-    { text: "🧹 Clean Dead", custom_id: "cmd_delvlessdead" },
-    { text: "❌ Del Wildcard", custom_id: "cmd_delwc" }
+    // Removed direct deploy button to reduce clutter, moved to command only? 
+    // Or keep it for Admin convenience. Let's keep deploynode.
+    { text: "👷 Deploy Node", custom_id: "cmd_deploynode" }
 ];
 
 // Paginated Main Menu Keyboard
@@ -62,24 +60,23 @@ export function getMainMenuKeyboard(page: number = 0) {
 // Deprecated old keyboard, mapped to new function for compatibility
 export const mainMenuKeyboard = getMainMenuKeyboard(0);
 
-// Inject Method Keyboard (New)
-export const injectMethodKeyboard = new InlineKeyboard()
-    .text("Tidak", "inject_method:none")
-    .text("Wildcard", "inject_method:wildcard")
-    .row()
-    .text("SNI/TLS", "inject_method:sni");
-
 export function getProxyListKeyboard(proxies: ProxyItem[]) {
     const keyboard = new InlineKeyboard();
 
     proxies.forEach(proxy => {
-        const flag = COUNTRIES[proxy.country]?.split(" ")[0] || "🏳️";
-        // Shorten label
-        const label = `(${proxy.country}) ${proxy.org} ${flag}`.slice(0, 40);
+        const flag = getFlagEmoji(proxy.country);
+        // Name: (CC) Org Name Flag
+        // Ensure Org is not too long for button
+        const safeOrg = proxy.org.length > 20 ? proxy.org.substring(0, 18) + ".." : proxy.org;
+        const label = `(${proxy.country}) ${safeOrg} ${flag}`;
+
+        // Callback: sel_prx:IP:PORT
         keyboard.text(label, `sel_prx:${proxy.ip}:${proxy.port}`).row();
     });
 
-    keyboard.text("🔄 Refresh List", "cmd_proxy"); // Button to re-fetch/randomize
+    // Add Manual Input Button at bottom of list too
+    keyboard.text("✏️ Input Manual (Proxy Pribadi)", "cmd_manual_input").row();
+    keyboard.text("🔙 Kembali", "menu_page:0");
     return keyboard;
 }
 

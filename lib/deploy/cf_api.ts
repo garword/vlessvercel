@@ -84,3 +84,42 @@ async function enableWorkersDev(apiToken: string, accountId: string, workerName:
         });
     } catch (e) { }
 }
+
+export async function createWorkerRoute(zoneId: string, apiToken: string, pattern: string, scriptName: string) {
+    const url = `https://api.cloudflare.com/client/v4/zones/${zoneId}/workers/routes`;
+
+    const response = await fetch(url, {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${apiToken}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            pattern: pattern,
+            script: scriptName
+        })
+    });
+
+    if (!response.ok) {
+        const err = await response.text();
+        console.error("Route Creation Failed:", err);
+    }
+}
+
+export async function putWorkerSecrets(accountId: string, apiToken: string, scriptName: string, secrets: Record<string, string>) {
+    for (const [key, value] of Object.entries(secrets)) {
+        const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}/secrets`;
+        await fetch(url, {
+            method: "PUT",
+            headers: {
+                "Authorization": `Bearer ${apiToken}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                name: key,
+                text: value,
+                type: "secret_text"
+            })
+        });
+    }
+}

@@ -13,6 +13,11 @@ export interface Env {
     GITHUB_PROXY_URL: string;
 }
 
+
+// Ensure types are available via imports or declare them if not using wrangler's global types
+// For simplicity in this script context:
+import type { ExecutionContext, ScheduledEvent } from '@cloudflare/workers-types';
+
 export default {
     async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
         console.log("⏰ Cron Triggered: Starting Proxy Update...");

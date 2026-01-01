@@ -38,6 +38,34 @@ async function main() {
         display_name TEXT NOT NULL, -- Synced with ORG (e.g. "Biznet Networks")
         cf_account_id TEXT DEFAULT 'default' -- For rotation later
       );
+
+      -- NEW: Users Table
+      CREATE TABLE IF NOT EXISTS users (
+        telegram_id TEXT PRIMARY KEY,
+        username TEXT,
+        first_name TEXT,
+        joined_at INTEGER
+      );
+
+      -- NEW: Cloudflare Accounts Table (Pool)
+      CREATE TABLE IF NOT EXISTS cf_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id TEXT, -- NULL for ADMIN/SYSTEM, telegram_id for Users
+        email TEXT,
+        api_token TEXT,
+        account_id TEXT,
+        zone_id TEXT,   -- For Auto-route wildcard
+        worker_domain TEXT, -- e.g. 'worker.dev' or custom domain
+        status TEXT DEFAULT 'active', -- 'active' | 'limited' | 'dead'
+        last_used INTEGER DEFAULT 0
+      );
+
+      -- NEW: Wildcards Table (Global)
+      CREATE TABLE IF NOT EXISTS wildcards (
+        domain TEXT PRIMARY KEY,
+        added_by TEXT, -- 'admin' or user_id
+        created_at INTEGER
+      );
     `);
 
         console.log("✅ Tables created successfully!");

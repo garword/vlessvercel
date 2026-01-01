@@ -1,4 +1,8 @@
 
+import QRCode from "qrcode";
+
+export const ITEMS_PER_PAGE = 5;
+
 export function uuidv4() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
@@ -6,30 +10,32 @@ export function uuidv4() {
     });
 }
 
-export function shuffleArray<T>(array: T[]): T[] {
-    let currentIndex = array.length, randomIndex;
-
-    // While there remain elements to shuffle.
-    while (currentIndex != 0) {
-
-        // Pick a remaining element.
-        randomIndex = Math.floor(Math.random() * currentIndex);
-        currentIndex--;
-
-        // And swap it with the current element.
-        [array[currentIndex], array[randomIndex]] = [
-            array[randomIndex], array[currentIndex]];
+export function shuffleArray(array: any[]) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
     }
-
     return array;
 }
 
-export function getFlagEmoji(isoCode: string) {
-    const codePoints = isoCode
+export function getFlagEmoji(countryCode: string) {
+    const codePoints = countryCode
         .toUpperCase()
-        .split("")
-        .map((char) => 127397 + char.charCodeAt(0));
+        .split('')
+        .map(char => 127397 + char.charCodeAt(0));
     return String.fromCodePoint(...codePoints);
 }
 
-export const ITEMS_PER_PAGE = 9; // Grid 3x3 for countries
+export async function generateQRCode(text: string): Promise<Buffer> {
+    try {
+        // Return Buffer directly
+        return await QRCode.toBuffer(text, {
+            errorCorrectionLevel: 'M',
+            margin: 4,
+            width: 500
+        });
+    } catch (err) {
+        console.error("QR Code Gen Error:", err);
+        throw err;
+    }
+}

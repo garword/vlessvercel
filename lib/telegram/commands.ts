@@ -1,75 +1,86 @@
 
-import { Bot, Context } from "grammy";
+import { Bot, Context, InputFile, InlineKeyboard } from "grammy";
 import { NauticaVPN } from "../vpn/nautica";
-import { mainMenuKeyboard, getMainMenuKeyboard, getCountryKeyboard, getFormatKeyboard, getInjectMethodKeyboard, getInjectMethodSpecificKeyboard, protocolSelectionKeyboard, subFormatKeyboard } from "./keyboards";
-import { getFlagEmoji } from "../utils/helpers";
-import { deployWorker } from "../deploy/cf_api";
+import { CFAccountManager } from "../deploy/cf_manager";
+import { mainMenuKeyboard, getMainMenuKeyboard, getCountryKeyboard, getFormatKeyboard, getInjectMethodKeyboard, getInjectMethodSpecificKeyboard, protocolSelectionKeyboard, subFormatKeyboard, getProxyListKeyboard, getProtocolSelectionSpecificKeyboard } from "./keyboards";
+import { getFlagEmoji, generateQRCode } from "../utils/helpers";
+import { deployWorker, createWorkerRoute, putWorkerSecrets } from "../deploy/cf_api";
 
 export function setupCommands(bot: Bot) {
     const vpn = NauticaVPN.getInstance();
-    const adminId = process.env.ADMIN_ID; // Use process.env in Next.js
+    const cfManager = new CFAccountManager();
+    const adminId = process.env.ADMIN_ID;
 
     const isAdmin = (id: number) => {
         if (!adminId) return false;
         return id.toString() === adminId;
     };
 
-    // /setcommands - Helper to set the Telegram Menu Button
-    bot.command("setcommands", async (ctx: Context) => {
-        if (!ctx.from) return;
-        if (!isAdmin(ctx.from.id)) {
-            return ctx.reply(`❌ Access Denied. Your ID: \`${ctx.from.id}\` is not in ADMIN_ID.`, { parse_mode: "Markdown" });
-        }
-
-        await ctx.api.setMyCommands([
-            { command: "start", description: "🏠 Menu Utama & Bantuan" },
-            { command: "proxy", description: "🚀 Buat Config Manual" },
-            { command: "proxyrandom", description: "🎲 Config Random Cepat" },
-            { command: "listvless", description: "🌏 Daftar Server Tersedia" },
-            { command: "allstatus", description: "📊 Cek Status Health" },
-            { command: "getsub", description: "🔗 Link Subscription" },
-            { command: "addwc", description: "➕ Add Wildcard (Admin)" },
-            { command: "delwc", description: "❌ Del Wildcard (Admin)" },
-            { command: "addvless", description: "➕ Add Server (Admin)" },
-            { command: "delvless", description: "🗑️ Del Server (Admin)" },
-            { command: "delvlessdead", description: "🧹 Clean Dead (Admin)" },
-            { command: "deploynode", description: "👷 Deploy Worker (Admin)" },
-            { command: "setcommands", description: "⚙️ Refresh Menu (Admin)" }
-        ]);
-
-        await ctx.reply("✅ Bot menu commands have been updated!");
-    });
-
-    // /start command
-    bot.command("start", async (ctx: Context) => {
-        const welcomeMsg =
-            "🎉 *Selamat datang di Nautica Bot! (Vercel Edition)*\n\n" +
-            "Kirimkan proxy untuk di cek statusnya, format ip:port maksimal 20 proxy.\n" +
-            "Atau gunakan menu tombol di bawah ini:";
-
-        await ctx.reply(welcomeMsg, {
-            parse_mode: "Markdown",
-            reply_markup: getMainMenuKeyboard(0)
-        });
-    });
-
-    // Handle Main Menu Pagination
-    bot.callbackQuery(/^menu_page:(.+)$/, async (ctx) => {
-        const page = parseInt(ctx.match[1]);
-        await ctx.editMessageReplyMarkup({
-            reply_markup: getMainMenuKeyboard(page)
-        });
-    });
-
     // Handle Button Commands
     bot.callbackQuery("cmd_proxy", async (ctx) => {
-        await ctx.reply("🌍 *Pilih Negara untuk Proxy VLESS:*", { parse_mode: "Markdown", reply_markup: getCountryKeyboard(0) });
-        // await ctx.answerCallbackQuery();
+        // CLEAN UI: Delete loading/previous message if possible or Edit
+        const loadingMsg = await ctx.editMessageText("🔄 *Sedang mengambil data server...*", { parse_mode: "Markdown" });
+
+        const proxies = await vpn.getProxies();
+
+        if (proxies.length === 0) {
+            return ctx.editMessageText("❌ *Tidak ada server tersedia saat ini.*\nSilakan coba lagi nanti atau gunakan Input Manual.", {
+                parse_mode: "Markdown",
+                reply_markup: new InlineKeyboard().text("✏️ Input Manual", "cmd_manual_input").row().text("🔙 Kembali", "menu_page:0")
+            });
+        }
+
+        await ctx.editMessageText("🌍 *Pilih Server Untuk Membuat Akun:*", {
+            parse_mode: "Markdown",
+            reply_markup: getProxyListKeyboard(proxies)
+        });
+    });
+
+    // Handle Manual Input Button
+    bot.callbackQuery("cmd_manual_input", async (ctx) => {
+        if (!ctx.from) return;
+
+        sessions[ctx.from.id] = {
+            type: 'manual_input',
+            step: 1,
+            msgToDelete: [] // Will start tracking from now
+        };
+
+        // We can't easily delete the *Menu* message unless we want to remove navigation.
+        // Let's just reply.
+        const qMsg = await ctx.reply("✏️ *Mode Input Manual*\n\nSilakan balas pesan ini dengan format `IP:PORT`\nContoh: `103.1.1.1:443`", { parse_mode: "Markdown" });
+
+        // Track for deletion
+        sessions[ctx.from.id].msgToDelete.push(qMsg.message_id);
+    });
+
+    // Handle Server Selection -> Show Protocol
+    bot.callbackQuery(/^sel_prx:(.+):(.+)$/, async (ctx) => {
+        if (!ctx.match) return;
+        const ip = ctx.match[1];
+        const port = ctx.match[2];
+
+        await ctx.editMessageText(`✅ Server Terpilih: \`${ip}:${port}\`\n\n📡 *Pilih Protokol:*`, {
+            parse_mode: "Markdown",
+            reply_markup: getProtocolSelectionSpecificKeyboard(ip, port, "any")
+        });
     });
 
     bot.callbackQuery("cmd_proxyrandom", async (ctx) => {
-        await ctx.reply("📡 *Pilih Protokol:*", { parse_mode: "Markdown", reply_markup: protocolSelectionKeyboard });
+        // Redirect to list logic or keep separate?
+        // Plan didn't explicitly kill this, but "Buat Akun" replaces "Generate Proxy".
+        // Let's keep it as a shortcut but maybe point to new flow?
+        // Converting to protocol selection immediately using random proxy?
+        const proxies = await vpn.getProxies();
+        if (proxies.length === 0) return ctx.reply("❌ Empty");
+        const p = proxies[Math.floor(Math.random() * proxies.length)];
+
+        await ctx.editMessageText(`🎲 *Random Pick:* \`${p.org}\`\n\n📡 *Pilih Protokol:*`, {
+            parse_mode: "Markdown",
+            reply_markup: getProtocolSelectionSpecificKeyboard(p.ip, p.port.toString(), "any")
+        });
     });
+
 
     bot.callbackQuery("cmd_listvless", async (ctx) => {
         // Reuse logic from command
@@ -272,22 +283,39 @@ export function setupCommands(bot: Bot) {
     });
 
 
-    // Handle Inject Method Selection (Updated for Protocol)
+    // Handle Inject Method Selection (Final Generation Step)
     bot.callbackQuery(/^inject_method:(.+):(.+)$/, async (ctx: Context) => {
         // Loading Animation
         await ctx.editMessageText("```RUNNING\nHarap menunggu, sedang memproses...\n```", { parse_mode: "Markdown" });
 
-        if (!ctx.match) return;
+        if (!ctx.match || !ctx.from) return;
         const method = ctx.match[1]; // none, wildcard, sni
         const protocol = ctx.match[2]; // vless, trojan, vmess
+        const userId = ctx.from.id.toString();
 
         const proxies = await vpn.getProxies();
         if (proxies.length === 0) return ctx.editMessageText("❌ Tidak ada proxy tersedia.");
 
         const proxy = proxies[Math.floor(Math.random() * proxies.length)];
-        let domain = "nautica.foolvpn.me"; // Default domain if not specified from outside
-        const uuid = "ab3202b8-446d-493e-9c5a-e1a870b3adaf";
-        const freshUuid = uuid;
+
+        // --- MULTI-ACCOUNT & DYNAMIC DOMAIN LOGIC ---
+        // 1. Try Personal Account
+        let cfAccount = await cfManager.getBestAccount(userId);
+
+        // 2. Fallback to System Account (Admin)
+        if (!cfAccount) {
+            cfAccount = await cfManager.getBestAccount(null); // Admin
+        }
+
+        // 3. Fallback to Default if DB Empty (Safety Net)
+        let workerDomain = "nautica.foolvpn.me";
+        if (cfAccount) {
+            workerDomain = cfAccount.worker_domain;
+            // Mark Used
+            await cfManager.markUsed(cfAccount.id);
+        }
+
+        const freshUuid = "ab3202b8-446d-493e-9c5a-e1a870b3adaf"; // Standard UUID
 
         let bugHost: string | undefined = undefined;
         if (method === "wildcard") {
@@ -299,138 +327,38 @@ export function setupCommands(bot: Bot) {
             }
         }
 
-        const sanitizedOrg = proxy.org.replace(/[^a-zA-Z0-9]/g, "").substring(0, 4).toLowerCase();
-        const pathValue = `/${proxy.country.toLowerCase()}-${sanitizedOrg}`;
         const name = `(${proxy.country}) ${proxy.org} ${getFlagEmoji(proxy.country)}`;
+        let config = "";
 
-        let tlsConfig = "";
-        let ntlsConfig = "";
-        let yamlConfig = "";
-
-        // Generate based on protocol
+        // Pass workerDomain to generators
         if (protocol === "vless") {
-            tlsConfig = vpn.generateVless(proxy, domain, freshUuid, bugHost);
-
-            let ntlsAddress = bugHost || domain;
-            let ntlsHost = domain;
-
-            // WILDCARD LOGIC for VLESS (Subdomain Spoofing)
-            // Logic: Address = BugHost, SNI/Host = BugHost.WorkerDomain
-            if (method === "wildcard" && bugHost) {
-                ntlsAddress = bugHost; // Address is the Bug Host (e.g. grab.com)
-                ntlsHost = `${bugHost}.${domain}`; // SNI/Host spoofed (e.g. grab.com.nautica.foolvpn.me)
-            }
-
-            ntlsConfig = `vless://${freshUuid}@${ntlsAddress}:80?encryption=none&security=none&type=ws&host=${ntlsHost}&path=${pathValue}%23${encodeURIComponent(name)}`;
+            config = vpn.generateVless(proxy, workerDomain, freshUuid, bugHost, workerDomain);
         } else if (protocol === "trojan") {
-            // TROJAN: Keep Standard (As requested "TROJAN TIDAK USAH")
-            tlsConfig = vpn.generateTrojan(proxy, domain, freshUuid, bugHost);
-
-            let ntlsAddress = bugHost || domain;
-            let ntlsHost = domain;
-            ntlsConfig = `trojan://${freshUuid}@${ntlsAddress}:80?security=none&type=ws&host=${ntlsHost}&path=${pathValue}%23${encodeURIComponent(name)}`;
+            config = vpn.generateTrojan(proxy, workerDomain, freshUuid, bugHost, workerDomain);
         } else if (protocol === "vmess") {
-            tlsConfig = vpn.generateVmess(proxy, domain, freshUuid, bugHost);
-
-            let ntlsAddress = bugHost || domain;
-            let ntlsHost = domain;
-
-            // WILDCARD LOGIC for VMess (Subdomain Spoofing)
-            if (method === "wildcard" && bugHost) {
-                ntlsAddress = bugHost;
-                ntlsHost = `${bugHost}.${domain}`;
-            }
-
-            const vmessObj = {
-                v: "2", ps: name, add: ntlsAddress, port: 80, id: freshUuid, aid: "0", scy: "auto", net: "ws", type: "none", host: ntlsHost, path: pathValue, tls: ""
-            };
-            ntlsConfig = `vmess://${btoa(JSON.stringify(vmessObj))}`;
+            config = vpn.generateVmess(proxy, workerDomain, freshUuid, bugHost, workerDomain);
         }
 
-        // YAML Config
-        let proxyBlock = "";
-        const yamlServer = bugHost || domain; // Server = Bug Host in Wildcard mode
-        let yamlSni = domain;
-        let yamlHost = domain;
+        // QR Code Generation
+        const qrBuffer = await generateQRCode(config);
 
-        // Apply Wildcard Spoofing to YAML as well for VLESS/VMess
-        if (method === "wildcard" && bugHost && (protocol === "vless" || protocol === "vmess")) {
-            yamlSni = `${bugHost}.${domain}`;
-            yamlHost = `${bugHost}.${domain}`;
-        }
+        // Final Reply
+        try {
+            // Delete the "Running..." message so chat is clean
+            await ctx.deleteMessage();
+        } catch (e) { }
 
-        if (protocol === "vless") {
-            proxyBlock = `  - name: ${name}
-    server: ${yamlServer}
-    port: 443
-    type: vless
-    uuid: ${freshUuid}
-    cipher: none
-    tls: true
-    skip-cert-verify: true
-    network: ws
-    servername: ${yamlSni}
-    ws-opts:
-      path: ${pathValue}
-      headers:
-        Host: ${yamlHost}
-    udp: true`;
-        } else if (protocol === "trojan") {
-            // Trojan Standard
-            proxyBlock = `  - name: ${name}
-    server: ${yamlServer}
-    port: 443
-    type: trojan
-    password: ${freshUuid}
-    skip-cert-verify: true
-    network: ws
-    sni: ${yamlSni}
-    ws-opts:
-      path: ${pathValue}
-      headers:
-        Host: ${yamlSni}
-    udp: true`;
-        } else if (protocol === "vmess") {
-            proxyBlock = `  - name: ${name}
-    server: ${yamlServer}
-    port: 443
-    type: vmess
-    uuid: ${freshUuid}
-    alterId: 0
-    cipher: auto
-    tls: true
-    skip-cert-verify: true
-    network: ws
-    servername: ${yamlSni}
-    ws-opts:
-      path: ${pathValue}
-      headers:
-        Host: ${yamlHost}
-    udp: true`;
-        }
-
-        yamlConfig = `proxies:\n${proxyBlock}`;
-
-        let methodDisplay = "NO";
-        if (method === "wildcard") methodDisplay = `Wildcard (${bugHost})`;
-        if (method === "sni") methodDisplay = "SNI";
-
-        const msg = `*Konfigurasi ${protocol.toUpperCase()} anda berhasil dibuat*\n` +
+        const caption = `*Konfigurasi ${protocol.toUpperCase()} Berhasil*\n` +
             `*Server:* ${name}\n` +
-            `*Path :* \`${pathValue}\`\n` +
-            `*Metode :* ${methodDisplay}\n\n` +
-            `\`TLS\`\n` +
-            `\`${tlsConfig}\`\n\n` +
-            `\`NTLS\`\n` +
-            `\`${ntlsConfig}\`\n\n` +
-            `\`yaml\`\n` +
-            `\`\`\`yaml\n${yamlConfig}\n\`\`\`\n` +
-            `-----------------------------------------------------\n` +
-            `📞 [Need Help? @lsvllyyy !](https://t.me/lsvllyyy)\n` +
-            `🚀 *Nikmati internet lebih cepat & aman!*\n` +
-            `🌐 [Join komunitas: @vless_bodong](https://t.me/vless_bodong)`;
+            `*Domain Worker:* \`${workerDomain}\`\n` +
+            `*Metode:* ${method.toUpperCase()} ${bugHost ? `(${bugHost})` : ""}\n\n` +
+            `\`${config}\`\n\n` +
+            `_Scan QR di atas untuk connect (v2rayNG/Nekobox)._`;
 
-        await ctx.editMessageText(msg, { parse_mode: "Markdown" });
+        await ctx.replyWithPhoto(new InputFile(qrBuffer, "qrcode.png"), {
+            caption: caption,
+            parse_mode: "Markdown"
+        });
     });
 
     // /listvless command
@@ -513,36 +441,141 @@ export function setupCommands(bot: Bot) {
 
 
     // Session Interface for Interactive Deployment
-    interface DeploySession {
+    interface InteractiveSession {
+        type: 'deploy' | 'addcf' | 'manual_input';
         step: number;
+
+        // Deploy / Add CF Props
         apiToken?: string;
         accountId?: string;
         workerName?: string;
+        email?: string;
+        zoneId?: string;
+        domain?: string;
+
         msgToDelete: number[];
     }
 
-    const sessions: Record<number, DeploySession> = {};
+    const sessions: Record<number, InteractiveSession> = {};
+
+    // /mycf command - Manage Personal Accounts
+    bot.command("mycf", async (ctx: Context) => {
+        if (!ctx.from) return;
+        const userId = ctx.from.id.toString();
+
+        const accounts = await cfManager.getAccounts(userId);
+
+        let msg = `☁️ *Akun Cloudflare Pribadi Anda:*\n\n`;
+        if (accounts.length === 0) {
+            msg += "_Belum ada akun tersimpan._\n";
+        } else {
+            accounts.forEach((acc, i) => {
+                msg += `${i + 1}. *${acc.email}* (${acc.worker_domain})\nStatus: \`${acc.status}\`\nLAST USED: ${new Date(acc.last_used).toLocaleString()}\n\n`;
+            });
+        }
+        msg += `\n_Balas pesan ini dengan perintah di bawah untuk mengelola:_`;
+
+        const keyboard = new InlineKeyboard()
+            .text("➕ Tambah Akun", "mycf_add")
+            .text("🗑️ Hapus Akun", "mycf_del") // We'll implement delete flow later or via command
+            .row()
+            .text("🔙 Kembali", "menu_page:0");
+
+        await ctx.reply(msg, { parse_mode: "Markdown", reply_markup: keyboard });
+    });
+
+    // Handle /mycf actions
+    bot.callbackQuery("mycf_add", async (ctx) => {
+        if (!ctx.from) return;
+
+        // Start Add CF Session
+        sessions[ctx.from.id] = {
+            type: 'addcf',
+            step: 1,
+            msgToDelete: [ctx.callbackQuery?.message?.message_id || 0]
+        };
+
+        const qMsg = await ctx.reply("📧 *Masukkan Email Akun Cloudflare Anda:*", { parse_mode: "Markdown" });
+        sessions[ctx.from.id].msgToDelete.push(qMsg.message_id);
+    });
 
     // /deploynode command - Interactive
     bot.command("deploynode", async (ctx: Context) => {
-        if (!ctx.from || !isAdmin(ctx.from.id)) return;
+        if (!ctx.from) return;
+        // Allow Admin OR Regular User (Personal Deployment)
 
         // Initialize session
-        const statusMsg = await ctx.reply("🔑 *Masukkan Cloudflare API Token:*", { parse_mode: "Markdown" });
+        const statusMsg = await ctx.reply("🔑 *Apakah anda ingin menggunakan akun tersimpan atau input manual?*\n\n(Fitur ini untuk sementara manual input saja untuk deploy baru)", { parse_mode: "Markdown" });
+        // NOTE: For now we keep the manual input flow for deploynode as per existing logic, or upgrade it?
+        // Let's stick to the existing Manual Flow for /deploynode for now but update type
+
+        await ctx.reply("🔑 *Masukkan Cloudflare API Token:*", { parse_mode: "Markdown" });
 
         sessions[ctx.from.id] = {
+            type: 'deploy',
             step: 1,
-            msgToDelete: [ctx.message!.message_id, statusMsg.message_id]
+            msgToDelete: [statusMsg.message_id]
         };
     });
 
-    // Handle text interactions (Proxy check & Interactive Deployment)
+    // /setcommands - Helper to set the Telegram Menu Button
+    bot.command("setcommands", async (ctx: Context) => {
+        if (!ctx.from) return;
+        if (!isAdmin(ctx.from.id)) {
+            return ctx.reply(`❌ Access Denied. Your ID: \`${ctx.from.id}\` is not in ADMIN_ID.`, { parse_mode: "Markdown" });
+        }
+
+        await ctx.api.setMyCommands([
+            { command: "start", description: "🏠 Menu Utama & Bantuan" },
+            { command: "mycf", description: "☁️ Kelola Cloudflare" },
+            { command: "proxy", description: "🚀 Buat Akun / Config" },
+            { command: "listvless", description: "🌏 Daftar Server Tersedia" },
+            { command: "allstatus", description: "📊 Cek Status Health" },
+            { command: "getsub", description: "🔗 Link Subscription" },
+            // Admin only usually, but visible to all
+            { command: "deploynode", description: "👷 Deploy Worker (Admin/User)" },
+            { command: "addwc", description: "➕ Add Wildcard (Admin)" },
+            { command: "delwc", description: "❌ Del Wildcard (Admin)" },
+            { command: "setcommands", description: "⚙️ Refresh Menu (Admin)" }
+        ]);
+
+        await ctx.reply("✅ Bot menu commands have been updated!");
+    });
+
+    // /start command
+    bot.command("start", async (ctx: Context) => {
+        // 1. Auto Register User
+        if (ctx.from) {
+            const { id, username, first_name } = ctx.from;
+            await cfManager.upsertUser(id.toString(), username || "", first_name);
+        }
+
+        const welcomeMsg =
+            "🎉 *Selamat datang di Nautica Bot! (Vercel Edition)*\n\n" +
+            "Gunakan menu di bawah untuk membuat akun SSH/VLESS gratis atau mengelola Worker Cloudflare Anda.\n" +
+            "Untuk input manual, gunakan tombol 'Input Manual'.";
+
+        await ctx.reply(welcomeMsg, {
+            parse_mode: "Markdown",
+            reply_markup: getMainMenuKeyboard(0)
+        });
+    });
+
+    // Handle Main Menu Pagination
+    bot.callbackQuery(/^menu_page:(.+)$/, async (ctx) => {
+        const page = parseInt(ctx.match[1]);
+        await ctx.editMessageReplyMarkup({
+            reply_markup: getMainMenuKeyboard(page)
+        });
+    });
+
+    // Handle text interactions (Proxy check & Interactive Deployment/Input)
     bot.on("message:text", async (ctx) => {
         const text = ctx.message.text;
         const userId = ctx.from.id;
 
-        // 1. Handle Interactive Deployment Session
-        if (sessions[userId]) {
+        // 1. Handle Interactive Session
+        if (sessions[userId] && ctx.message) {
             const session = sessions[userId];
             session.msgToDelete.push(ctx.message.message_id);
 
@@ -551,72 +584,129 @@ export function setupCommands(bot: Bot) {
                 for (const msgId of session.msgToDelete) {
                     try {
                         await ctx.api.deleteMessage(ctx.chat.id, msgId);
-                    } catch (e) { /* ignore if already deleted */ }
+                    } catch (e) { /* ignore */ }
                 }
                 session.msgToDelete = []; // Reset list
             }
 
-            if (session.step === 1) {
-                // Input API Token
-                session.apiToken = text;
-                session.step = 2;
-
-                await cleanup(); // Delete user input and prompt
-
-                const nextMsg = await ctx.reply("🆔 *Masukkan Account ID:*", { parse_mode: "Markdown" });
-                session.msgToDelete.push(nextMsg.message_id);
-                return;
-            }
-
-            if (session.step === 2) {
-                // Input Account ID
-                session.accountId = text;
-                session.step = 3;
-
-                await cleanup();
-
-                const nextMsg = await ctx.reply("📝 *Masukkan Nama Worker (contoh: vpn-sg1):*", { parse_mode: "Markdown" });
-                session.msgToDelete.push(nextMsg.message_id);
-                return;
-            }
-
-            if (session.step === 3) {
-                // Input Worker Name
-                session.workerName = text;
-
-                await cleanup();
-
-                const waitMsg = await ctx.reply("⏳ *Mohon tunggu, sedang mendeploy...*", { parse_mode: "Markdown" });
-
-                // Execute Deployment
-                try {
-                    const result = await deployWorker(
-                        session.apiToken!,
-                        session.accountId!,
-                        session.workerName!
-                    );
-
-                    if (result.success) {
-                        const logMsg = `✅ *Deploy Berhasil!*\n\n` +
-                            `👷 Worker: \`${session.workerName}\`\n` +
-                            `🌐 URL: ${result.url}\n\n` +
-                            `_Worker VPN siap digunakan._`;
-
-                        // Delete wait message and send success log
-                        await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id);
-                        await ctx.reply(logMsg, { parse_mode: "Markdown" });
-                    } else {
-                        await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id);
-                        await ctx.reply(`❌ *Deploy Gagal!*\nExample Error: ${result.message}`, { parse_mode: "Markdown" });
-                    }
-                } catch (error: any) {
-                    await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id);
-                    await ctx.reply(`❌ *Error Fatal:*\n${error.message}`, { parse_mode: "Markdown" });
+            // --- ADD CF ACCOUNT FLOW ---
+            if (session.type === 'addcf') {
+                if (session.step === 1) { // Email -> Token
+                    session.email = text;
+                    session.step = 2;
+                    await cleanup();
+                    const nextMsg = await ctx.reply("🔑 *Masukkan API Token Cloudflare:*", { parse_mode: "Markdown" });
+                    session.msgToDelete.push(nextMsg.message_id);
+                    return;
                 }
+                if (session.step === 2) { // Token -> Account ID
+                    session.apiToken = text;
+                    session.step = 3;
+                    await cleanup();
+                    const nextMsg = await ctx.reply("🆔 *Masukkan Account ID Cloudflare:*", { parse_mode: "Markdown" });
+                    session.msgToDelete.push(nextMsg.message_id);
+                    return;
+                }
+                if (session.step === 3) { // AccID -> Zone ID
+                    session.accountId = text;
+                    session.step = 4;
+                    await cleanup();
+                    const nextMsg = await ctx.reply("🌐 *Masukkan Zone ID (untuk domain worker):*", { parse_mode: "Markdown" });
+                    session.msgToDelete.push(nextMsg.message_id);
+                    return;
+                }
+                if (session.step === 4) { // ZoneID -> Domain
+                    session.zoneId = text;
+                    session.step = 5;
+                    await cleanup();
+                    const nextMsg = await ctx.reply("🌍 *Masukkan Domain Worker (contoh: myworker.mysite.com):*", { parse_mode: "Markdown" });
+                    session.msgToDelete.push(nextMsg.message_id);
+                    return;
+                }
+                if (session.step === 5) { // Domain -> Save
+                    session.domain = text;
+                    await cleanup();
 
-                // Clear session
+                    const waitMsg = await ctx.reply("⏳ *Verifying & Saving...*", { parse_mode: "Markdown" });
+
+                    try {
+                        await cfManager.addAccount(userId.toString(), session.email!, session.apiToken!, session.accountId!, session.zoneId!, session.domain!);
+
+                        await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id);
+                        await ctx.reply(`✅ *Akun Cloudflare Berhasil Disimpan!*\n\nEmail: \`${session.email}\`\nDomain: \`${session.domain}\`\n\n_Bot akan otomatis merotasi ke akun ini jika akun utama limit._`, { parse_mode: "Markdown" });
+                    } catch (e: any) {
+                        await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id);
+                        await ctx.reply(`❌ *Gagal Menyimpan Akun:*\n${e.message}`);
+                    }
+
+                    delete sessions[userId];
+                    return;
+                }
+            }
+
+            // --- MANUAL INPUT FLOW ---
+            if (session.type === 'manual_input') {
+                // Expect IP:PORT
+                const match = text.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)$/);
+                if (!match) {
+                    const err = await ctx.reply("❌ Format Salah. Gunakan IP:PORT (contoh: `1.1.1.1:443`). Coba lagi.");
+                    session.msgToDelete.push(err.message_id);
+                    return;
+                }
+                const ip = match[1];
+                const port = match[2];
+
+                await cleanup();
+
+                // Proceed to Protocol Selection with Manual IP
+                await ctx.reply(`✅ Server Manual: \`${ip}:${port}\`\n\n📡 *Pilih Protokol:*`, {
+                    parse_mode: "Markdown",
+                    reply_markup: getProtocolSelectionSpecificKeyboard(ip, port, "manual")
+                });
+
                 delete sessions[userId];
                 return;
+            }
+
+            // --- DEPLOY NODE FLOW (Legacy/Admin) ---
+            if (session.type === 'deploy') {
+                if (session.step === 1) {
+                    session.apiToken = text;
+                    session.step = 2;
+                    await cleanup();
+                    const nextMsg = await ctx.reply("🆔 *Masukkan Account ID:*", { parse_mode: "Markdown" });
+                    session.msgToDelete.push(nextMsg.message_id);
+                    return;
+                }
+                if (session.step === 2) {
+                    session.accountId = text;
+                    session.step = 3;
+                    await cleanup();
+                    const nextMsg = await ctx.reply("📝 *Masukkan Nama Worker (contoh: vpn-sg1):*", { parse_mode: "Markdown" });
+                    session.msgToDelete.push(nextMsg.message_id);
+                    return;
+                }
+                if (session.step === 3) {
+                    session.workerName = text;
+                    await cleanup();
+                    const waitMsg = await ctx.reply("⏳ *Mohon tunggu, sedang mendeploy...*", { parse_mode: "Markdown" });
+
+                    try {
+                        const result = await deployWorker(session.apiToken!, session.accountId!, session.workerName!);
+                        if (result.success) {
+                            await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id);
+                            await ctx.reply(`✅ *Deploy Berhasil!*\n🌐 URL: ${result.url}`, { parse_mode: "Markdown" });
+                        } else {
+                            await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id);
+                            await ctx.reply(`❌ *Deploy Gagal:*\n${result.message}`, { parse_mode: "Markdown" });
+                        }
+                    } catch (error: any) {
+                        await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id);
+                        await ctx.reply(`❌ *Error Fatal:*\n${error.message}`, { parse_mode: "Markdown" });
+                    }
+                    delete sessions[userId];
+                    return;
+                }
             }
         }
 
@@ -624,7 +714,6 @@ export function setupCommands(bot: Bot) {
         if (text.startsWith("/")) return; // Ignore commands
 
         // Check if it looks like IP:PORT
-        // Simple regex: IP:PORT
         const lines = text.split("\n");
         const potentialProxies = lines.filter(l => l.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+$/));
 
@@ -637,18 +726,14 @@ export function setupCommands(bot: Bot) {
             for (const proxyStr of potentialProxies) {
                 const [ip, portStr] = proxyStr.split(":");
                 const health = await vpn.checkHealth(ip, parseInt(portStr));
-
                 if (!health.error) {
                     activeCount++;
-                    results += `✅ ${proxyStr} (Active)\n` +
-                        `   📍 ${health.result?.country || "?"} - ${health.result?.asOrganization || "?"}\n\n`;
+                    results += `✅ ${proxyStr} (Active)\n   📍 ${health.result?.country || "?"} - ${health.result?.asOrganization || "?"}\n\n`;
                 } else {
                     results += `❌ ${proxyStr} (Dead)\n\n`;
                 }
             }
-
             results += `📊 Result: ${activeCount}/${potentialProxies.length} Active.`;
-
             await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, results);
         }
     });

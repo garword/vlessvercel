@@ -10,7 +10,7 @@ const env = {
 async function main() {
     console.log("🚀 Running Feeder Worker Simulation...");
     // Mock ScheduledEvent and ExecutionContext
-    await worker.scheduled({ cron: "* * * * *", type: "scheduled", scheduledTime: Date.now() }, env, { waitUntil: (p) => p, passThroughOnException: () => { } });
+    await worker.scheduled({ cron: "* * * * *", type: "scheduled", scheduledTime: Date.now() } as any, env, { waitUntil: (p: Promise<any>) => p, passThroughOnException: () => { } } as any);
     console.log("✅ Simulation Complete.");
 }
 

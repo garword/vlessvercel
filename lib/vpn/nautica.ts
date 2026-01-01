@@ -156,16 +156,17 @@ export class NauticaVPN {
         }
 
         // Return exactly what is in cache (which should be the 6 elite nodes from DB)
-        // Sort by Country (ID first) is safe logic
-        const id = this.cachedProxies.filter(p => p.country === "ID");
-        const sg = this.cachedProxies.filter(p => p.country === "SG");
-        return [...id, ...sg];
+        // Sort by Country        // Filter ONLY 3 ID and 3 SG (STRICT LIMIT for Fallback too)
+        const idProxies = this.cachedProxies.filter(p => p.country === "ID").slice(0, 3);
+        const sgProxies = this.cachedProxies.filter(p => p.country === "SG").slice(0, 3);
+        return [...idProxies, ...sgProxies];
     }
 
 
     // Generate VLESS Link
-    public generateVless(proxy: ProxyItem, domain: string = "example.com", uuid: string = "", bugHost?: string): string {
+    public generateVless(proxy: ProxyItem, domain: string = "nautica.foolvpn.me", uuid: string = "", bugHost?: string, workerDomain?: string): string {
         if (!uuid) uuid = uuidv4();
+        if (workerDomain) domain = workerDomain; // Override with Dynamic Domain
 
         const address = bugHost || domain;
         const sni = bugHost ? `${bugHost}.${domain}` : domain;
@@ -193,7 +194,8 @@ export class NauticaVPN {
     }
 
     // Generate Trojan Link
-    public generateTrojan(proxy: ProxyItem, domain: string = "example.com", uuid: string = "", bugHost?: string): string {
+    public generateTrojan(proxy: ProxyItem, domain: string = "nautica.foolvpn.me", uuid: string = "", bugHost?: string, workerDomain?: string): string {
+        if (workerDomain) domain = workerDomain; // Override
         const password = uuid || "trojan";
 
         const address = bugHost || domain;
@@ -219,7 +221,8 @@ export class NauticaVPN {
     }
 
     // Generate VMess Link (Base64 JSON)
-    public generateVmess(proxy: ProxyItem, domain: string = "example.com", uuid: string = "", bugHost?: string): string {
+    public generateVmess(proxy: ProxyItem, domain: string = "nautica.foolvpn.me", uuid: string = "", bugHost?: string, workerDomain?: string): string {
+        if (workerDomain) domain = workerDomain; // Override
         if (!uuid) uuid = uuidv4();
 
         const address = bugHost || domain;
