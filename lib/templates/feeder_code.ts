@@ -6,6 +6,16 @@ export const FEEDER_SCRIPT = `
  */
 
 export default {
+    async fetch(request, env, ctx) {
+        // Manual Trigger via HTTP
+        const url = new URL(request.url);
+        if (url.pathname === "/") {
+            await this.scheduled(null, env, ctx);
+            return new Response("✅ Feeder Triggered Manually. Check Logs for details.", { status: 200 });
+        }
+        return new Response("Feeder Worker Active. Visit / to trigger.", { status: 200 });
+    },
+
     async scheduled(event, env, ctx) {
         console.log("⏰ Cron Triggered: Starting Proxy Update...");
 
