@@ -6,6 +6,7 @@ import { mainMenuKeyboard, getMainMenuKeyboard, getCountryKeyboard, getFormatKey
 import { getFlagEmoji, generateQRCode } from "../utils/helpers";
 import { deployWorker, createWorkerRoute, putWorkerSecrets, createCronTrigger } from "../deploy/cf_api";
 import { FEEDER_SCRIPT } from "../templates/feeder_code";
+import { createClient } from "@libsql/client";
 
 export function setupCommands(bot: Bot) {
     const vpn = NauticaVPN.getInstance();
@@ -898,10 +899,7 @@ export function setupCommands(bot: Bot) {
         });
     });
 
-    // ... imports
-    import { createClient } from "@libsql/client";
 
-    // ... existing code
 
     // ---------------------------------------------------------
     // FEEDER MANAGEMENT LOGIC
