@@ -1,4 +1,4 @@
-export const FEEDER_SCRIPT = \`
+export const FEEDER_SCRIPT = `
 /**
  * Cloudflare Worker: Feeder & Rotator
  * Description: Fetches proxies from GitHub, updates Turso DB, and maintains the Elite 6 Slots.
@@ -161,4 +161,4 @@ async function maintainSlots(client: any) {
         }
     }
 }
-\`;\n
+`; \n
