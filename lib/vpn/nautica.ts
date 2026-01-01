@@ -34,7 +34,7 @@ export class NauticaVPN {
 
     // TURSO DB Integration
     private dbClient: any = null;
-    private readonly DB_CACHE_TTL = 30 * 1000; // 30s Cache
+    private readonly DB_CACHE_TTL = 300 * 1000; // 5 Minutes Cache Strategies
 
     private constructor() {
         // Initialize Turso
@@ -55,6 +55,11 @@ export class NauticaVPN {
 
         // Initial Static Load (as absolute fallback)
         this.cachedProxies = [...STATIC_PROXIES];
+
+        // Proactive Fetch on Init (Fire & Forget)
+        if (this.dbClient) {
+            this.fetchFromDB().catch(console.error);
+        }
     }
 
     public static getInstance(): NauticaVPN {
@@ -133,9 +138,11 @@ export class NauticaVPN {
 
     // Get Active Proxies (Strict 6 from DB)
     public async getProxies(countryCode?: string): Promise<ProxyItem[]> {
-        // Check DB Cache
+        // Stale-While-Revalidate Strategy
+        // Return existing cache immediately, but trigger update if stale.
         if (this.dbClient && (Date.now() - this.lastFetch > this.DB_CACHE_TTL)) {
-            await this.fetchFromDB();
+            console.log("Cache Stale: Triggering Background Refresh (Non-Blocking)");
+            this.fetchFromDB().catch(e => console.error("BG Fetch Error:", e));
         }
 
         let proxies = this.cachedProxies;
@@ -151,8 +158,11 @@ export class NauticaVPN {
 
     // Helper to get top proxies (returns strictly the 6 elite nodes)
     public async getTopProxies(refresh: boolean = false): Promise<ProxyItem[]> {
-        if (refresh || (this.dbClient && Date.now() - this.lastFetch > this.DB_CACHE_TTL)) {
+        // If 'refresh' is forced, we await. Otherwise we capitalize on cache.
+        if (refresh) {
             await this.fetchFromDB();
+        } else if (this.dbClient && Date.now() - this.lastFetch > this.DB_CACHE_TTL) {
+            this.fetchFromDB().catch(console.error);
         }
 
         // Return exactly what is in cache (which should be the 6 elite nodes from DB)
